@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- RISKPROOF SAMPLE DATA: synthetic .nessus report for offline demonstration.
+     Hosts, plugin IDs, scores, and outputs are illustrative, not real scan data. -->
+<NessusClientData_v2>
+  <ServerPreferences>
+    <ServerPreference name="policy">
+      RiskProof demo policy (synthetic)
+    </ServerPreference>
+  </ServerPreferences>
+  <Report name="RiskProof Demo Scan 2026-01-05">
+    <ReportHost name="prod-web-01.demo.local">
+      <HostProperties>
+        <tag name="HOST_START">Mon Jan 05 09:12:00 2026</tag>
+        <tag name="HOST_END">Mon Jan 05 09:14:32 2026</tag>
+        <tag name="operating-system">Ubuntu 22.04 LTS</tag>
+        <tag name="host-ip">10.20.0.11</tag>
+        <tag name="netbios-name">prod-web-01</tag>
+      </HostProperties>
+      <ReportItem port="8080" protocol="tcp" severity="4" pluginID="155999" pluginName="Apache Log4j 2.x &lt; 2.15.0 Remote Code Execution (Log4Shell)" pluginFamily="Web Servers" svc_name="www" pluginType="active">
+        <description>Apache Log4j 2.x versions prior to 2.15.0 are vulnerable to remote code execution via crafted JNDI lookups (CVE-2021-44228, Log4Shell).</description>
+        <cve>CVE-2021-44228</cve>
+        <vpr_score>10.0</vpr_score>
+        <risk_factor>Critical</risk_factor>
+        <solution>Upgrade Log4j to 2.17.1 or later and restart the application.</solution>
+        <cvss3_base_score>10.0</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H</cvss3_vector>
+        <plugin_output>
+  Path : /opt/demo-app/lib/log4j-core-2.14.1.jar
+  Installed version : 2.14.1
+  Fixed version : 2.17.1
+        </plugin_output>
+      </ReportItem>
+      <ReportItem port="22" protocol="tcp" severity="3" pluginID="191594" pluginName="OpenSSH 8.5p1 to 9.7p1 Signal Handler Race Condition (regreSSHion)" pluginFamily="Misc." svc_name="ssh" pluginType="remote">
+        <description>OpenSSH server versions 8.5p1 through 9.7p1 contain a signal handler race condition (CVE-2024-6387) that may allow unauthenticated remote code execution as root on glibc-based systems.</description>
+        <cve>CVE-2024-6387</cve>
+        <vpr_score>7.3</vpr_score>
+        <risk_factor>High</risk_factor>
+        <solution>Upgrade OpenSSH to 9.8p1 or later, or apply the distribution backport.</solution>
+        <cvss3_base_score>8.1</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H</cvss3_vector>
+        <plugin_output>
+  Remote SSH version : OpenSSH_9.6p1 Ubuntu-3ubuntu13
+        </plugin_output>
+      </ReportItem>
+    </ReportHost>
+    <ReportHost name="corp-db-02.demo.local">
+      <HostProperties>
+        <tag name="HOST_START">Mon Jan 05 09:12:05 2026</tag>
+        <tag name="HOST_END">Mon Jan 05 09:15:10 2026</tag>
+        <tag name="operating-system">Microsoft Windows Server 2016</tag>
+        <tag name="host-ip">10.20.0.25</tag>
+        <tag name="netbios-name">corp-db-02</tag>
+      </HostProperties>
+      <ReportItem port="445" protocol="tcp" severity="4" pluginID="121080" pluginName="MS Netlogon Remote Protocol Elevation of Privilege (Zerologon)" pluginFamily="Windows" svc_name="cifs" pluginType="remote">
+        <description>The Netlogon Remote Protocol implementation allows elevation of privilege (CVE-2020-1472, Zerologon). Successful exploitation can allow an attacker to fully compromise the domain.</description>
+        <cve>CVE-2020-1472</cve>
+        <vpr_score>9.3</vpr_score>
+        <risk_factor>Critical</risk_factor>
+        <solution>Install the August 2020 (or later) security updates and enforce secure RPC.</solution>
+        <cvss3_base_score>5.5</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:C/C:H/I:L/A:L</cvss3_vector>
+        <plugin_output>
+  The remote host allows Netlogon secure channel negotiation without
+  secure RPC enforcement (sample observation).
+        </plugin_output>
+      </ReportItem>
+      <ReportItem port="22" protocol="tcp" severity="2" pluginID="215400" pluginName="OpenSSH &lt; 9.6 ChaCha20-Poly1305 Prefix Truncation (Terrapin)" pluginFamily="Misc." svc_name="ssh" pluginType="remote">
+        <description>OpenSSH before 9.6 is vulnerable to prefix truncation attacks against the SSH transport protocol (CVE-2023-48795, Terrapin) when certain algorithms are negotiated.</description>
+        <cve>CVE-2023-48795</cve>
+        <vpr_score>5.1</vpr_score>
+        <risk_factor>Medium</risk_factor>
+        <solution>Upgrade OpenSSH to 9.6 or later, or remove vulnerable algorithms (chacha20-poly1305@openssh.com, *-etm@openssh.com MACs) from the server configuration.</solution>
+        <cvss3_base_score>5.9</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N</cvss3_vector>
+        <plugin_output>
+  Remote SSH version : OpenSSH_8.9p1
+  Vulnerable algorithm negotiation observed (sample).
+        </plugin_output>
+      </ReportItem>
+    </ReportHost>
+    <ReportHost name="dev-jump-03.demo.local">
+      <HostProperties>
+        <tag name="HOST_START">Mon Jan 05 09:12:10 2026</tag>
+        <tag name="HOST_END">Mon Jan 05 09:13:02 2026</tag>
+        <tag name="operating-system">Ubuntu 20.04 LTS</tag>
+        <tag name="host-ip">10.20.0.60</tag>
+        <tag name="netbios-name">dev-jump-03</tag>
+      </HostProperties>
+      <ReportItem port="22" protocol="tcp" severity="0" pluginID="10180" pluginName="TCP/IP Timestamps Supported" pluginFamily="General" svc_name="ssh" pluginType="remote">
+        <description>The remote host implements TCP timestamps and therefore allows remote probing of system uptime.</description>
+        <risk_factor>None</risk_factor>
+        <solution>Consider disabling TCP timestamps via sysctl if uptime disclosure is a concern.</solution>
+        <plugin_output>
+  The remote host implements TCP timestamps (sample observation).
+        </plugin_output>
+      </ReportItem>
+    </ReportHost>
+  </Report>
+</NessusClientData_v2>

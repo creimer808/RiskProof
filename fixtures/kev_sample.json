@@ -1,0 +1,33 @@
+{
+  "title": "CISA Catalog of Known Exploited Vulnerabilities - RISKPROOF SAMPLE EXTRACT",
+  "catalogVersion": "riskproof-sample-2026.01",
+  "dateReleased": "2026-01-02T00:00:00.0000Z",
+  "count": 2,
+  "_riskproof_notice": "SAMPLE KEV EXTRACT for offline demonstration. Contains ONLY the demo CVEs. A CVE absent from this file is NOT proven absent from the real CISA KEV catalog. Always verify against the live feed (source=live) before acting.",
+  "vulnerabilities": [
+    {
+      "vendorProject": "Apache",
+      "product": "Log4j2",
+      "vulnerabilityName": "Apache Log4j2 Remote Code Execution Vulnerability",
+      "cveID": "CVE-2021-44228",
+      "dateAdded": "2021-12-10",
+      "shortDescription": "Apache Log4j2 contains a remote code execution vulnerability via JNDI lookups (Log4Shell).",
+      "requiredAction": "Apply updates per vendor instructions.",
+      "dueDate": "2021-12-24",
+      "knownRansomwareCampaignUse": "Known",
+      "notes": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
+    },
+    {
+      "vendorProject": "Microsoft",
+      "product": "Windows Netlogon",
+      "vulnerabilityName": "Microsoft Windows Netlogon Elevation of Privilege Vulnerability",
+      "cveID": "CVE-2020-1472",
+      "dateAdded": "2021-11-03",
+      "shortDescription": "Windows Netlogon contains an elevation of privilege vulnerability (Zerologon).",
+      "requiredAction": "Apply updates per vendor instructions.",
+      "dueDate": "2021-11-03",
+      "knownRansomwareCampaignUse": "Known",
+      "notes": "https://nvd.nist.gov/vuln/detail/CVE-2020-1472"
+    }
+  ]
+}

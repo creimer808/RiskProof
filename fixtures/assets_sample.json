@@ -1,0 +1,46 @@
+{
+  "_riskproof_notice": "SAMPLE DATA: synthetic findings for offline demonstration. Not real scan results.",
+  "assets": [
+    {
+      "asset_id": "prod-web-01",
+      "hostname": "prod-web-01.demo.local",
+      "ip_address": "10.20.0.11",
+      "operating_system": "Ubuntu 22.04 LTS",
+      "criticality": "critical",
+      "environment": "production",
+      "internet_facing": true,
+      "owner": "platform-team",
+      "services": [
+        { "port": 8080, "protocol": "tcp", "service": "www", "product": "demo-web-app", "version": "1.4.2" },
+        { "port": 22, "protocol": "tcp", "service": "ssh", "product": "OpenSSH", "version": "9.6p1" }
+      ]
+    },
+    {
+      "asset_id": "corp-db-02",
+      "hostname": "corp-db-02.demo.local",
+      "ip_address": "10.20.0.25",
+      "operating_system": "Microsoft Windows Server 2016",
+      "criticality": "critical",
+      "environment": "production",
+      "internet_facing": false,
+      "owner": "data-platform",
+      "services": [
+        { "port": 445, "protocol": "tcp", "service": "cifs", "product": "Microsoft Windows SMB", "version": null },
+        { "port": 22, "protocol": "tcp", "service": "ssh", "product": "OpenSSH", "version": "8.9p1" }
+      ]
+    },
+    {
+      "asset_id": "dev-jump-03",
+      "hostname": "dev-jump-03.demo.local",
+      "ip_address": "10.20.0.60",
+      "operating_system": "Ubuntu 20.04 LTS",
+      "criticality": "low",
+      "environment": "development",
+      "internet_facing": false,
+      "owner": "infra-lab",
+      "services": [
+        { "port": 22, "protocol": "tcp", "service": "ssh", "product": "OpenSSH", "version": "8.2p1" }
+      ]
+    }
+  ]
+}

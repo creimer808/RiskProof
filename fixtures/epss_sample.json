@@ -1,0 +1,14 @@
+{
+  "status": "OK",
+  "status-code": 200,
+  "version": "1.0",
+  "access": "restricted",
+  "total-results": 4,
+  "_riskproof_notice": "SAMPLE EPSS DATA for offline demonstration. Values are illustrative and NOT live FIRST EPSS scores. EPSS is the probability that a CVE is exploited in the wild within 30 days - a property of the CVE, not of any specific system.",
+  "data": [
+    { "cve": "CVE-2021-44228", "epss": "0.94182", "percentile": "0.99875", "date": "2026-01-02" },
+    { "cve": "CVE-2024-6387", "epss": "0.16423", "percentile": "0.94310", "date": "2026-01-02" },
+    { "cve": "CVE-2020-1472", "epss": "0.05531", "percentile": "0.87260", "date": "2026-01-02" },
+    { "cve": "CVE-2023-48795", "epss": "0.01204", "percentile": "0.66400", "date": "2026-01-02" }
+  ]
+}

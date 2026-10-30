@@ -1,0 +1,102 @@
+# Usage guide
+
+## Install
+
+```bash
+cd RiskProof
+uv sync            # creates .venv and installs riskproof + deps
+```
+
+## Configure
+
+```bash
+cp .env.example .env
+# Edit .env: at minimum, set RISKPROOF_ALLOWED_TARGETS if you plan to use
+# validate_exposure. Everything works without Tenable credentials.
+```
+
+Key settings (all optional, secure defaults):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RISKPROOF_DB_PATH` | `~/.riskproof/riskproof.db` | SQLite storage |
+| `RISKPROOF_OFFLINE` | `false` | Force SAMPLE fixture intel |
+| `RISKPROOF_ALLOWED_TARGETS` | *(empty = deny all)* | Validation allowlist (hosts/IPs/CIDRs, comma-separated) |
+| `RISKPROOF_DRY_RUN` | `true` | Record actions instead of executing |
+| `RISKPROOF_REQUIRE_APPROVAL` | `true` | All policy actions need human approval |
+
+## Smoke test (no MCP client needed)
+
+```bash
+uv run riskproof demo            # offline, SAMPLE data, full pipeline
+uv run riskproof demo --live     # live FIRST EPSS + CISA KEV feeds
+```
+
+## Run the MCP server
+
+```bash
+uv run riskproof serve           # MCP over stdio (the default)
+# equivalent: uv run python -m riskproof serve
+```
+
+## Connect an MCP client
+
+### Claude Desktop / Claude Code (stdio)
+
+```json
+{
+  "mcpServers": {
+    "riskproof": {
+      "command": "uv",
+      "args": ["--directory", "/absolute/path/to/RiskProof", "run", "riskproof", "serve"]
+    }
+  }
+}
+```
+
+With Claude Code you can also run:
+
+```bash
+claude mcp add riskproof -- uv --directory /absolute/path/to/RiskProof run riskproof serve
+```
+
+### Any MCP-compatible client
+
+The server exposes seven tools over stdio:
+`investigate_finding`, `enrich_threat_intel`, `verify_applicability`,
+`validate_exposure`, `analyze_exploit_scenario`, `simulate_remediation`,
+`execute_risk_policy`.
+
+## Example session
+
+> User: "Investigate the demo scan and tell me what actually matters."
+
+1. Agent calls `investigate_finding(fixture="findings_sample.json")`
+2. Agent reads the per-finding assessments (dimensions + priorities)
+3. Agent calls `analyze_exploit_scenario` on the top P1
+4. Agent calls `simulate_remediation` and reports options with expected effects
+5. Agent calls `execute_risk_policy(finding_ids=[...])` and reports the recorded
+   (dry-run) actions
+
+> User: "What do you know about CVE-2021-44228?"
+
+Agent calls `enrich_threat_intel(cve_ids=["CVE-2021-44228"], source="auto")`
+and reports EPSS (with the statistical caveat), KEV status, and provenance.
+
+## Offline demo data
+
+All files in `fixtures/` are clearly-labeled SAMPLE data (see
+`fixtures/README.md`). The demo dataset covers: a KEV-listed internet-facing
+critical (Log4Shell), a high-EPSS non-KEV finding (regreSSHion), a KEV-listed
+internal critical with modest CVSS (Zerologon), a medium noise finding
+(Terrapin), and a CVE-less informational finding — exercising the full decision
+table.
+
+## Development
+
+```bash
+uv run pytest                    # tests (offline; live tests opt-in)
+RISKPROOF_LIVE_TESTS=1 uv run pytest tests/test_live_intel.py   # real feeds
+uv run ruff check .              # lint
+uv run ruff format .             # format
+```
