@@ -13,7 +13,7 @@ enforcement, and authorized actions.
                │ MCP (stdio)
 ┌──────────────▼───────────────────────────────────┐
 │ riskproof.server  (FastMCP)                      │
-│ riskproof.tools    10 tools = thin wrappers      │
+│ riskproof.tools    11 tools = thin wrappers      │
 ├──────────────────────────────────────────────────┤
 │ riskproof.engine    deterministic logic          │
 │   risk.py        dimensions + decision table     │

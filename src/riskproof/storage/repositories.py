@@ -105,6 +105,13 @@ class InvestigationRepository:
             return None
         return InvestigationRecord.model_validate_json(row["payload"])
 
+    def list_ids(self, limit: int = 10000) -> list[str]:
+        """Finding ids that have an investigation record (oldest update first)."""
+        rows = self._db.query_all(
+            "SELECT finding_id FROM investigations ORDER BY updated_at LIMIT ?", (limit,)
+        )
+        return [r["finding_id"] for r in rows]
+
 
 class IntelCacheRepository:
     """Generic TTL cache for external intel payloads (e.g. the KEV catalog)."""

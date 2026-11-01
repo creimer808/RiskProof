@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 
 from riskproof.engine import importer, remediation, scenario
 from riskproof.engine import investigation as inv
+from riskproof.engine import report as report_engine
 from riskproof.engine.risk import RiskAssessment
 from riskproof.errors import InvalidInputError, RiskProofError, error_payload
 from riskproof.models.evidence import InvestigationRecord
@@ -341,6 +342,47 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
                 "note": (
                     "Milestone 0 records actions for human execution; no external "
                     "ticketing system is contacted."
+                ),
+            }
+        except RiskProofError as exc:
+            return {"ok": False, "error": error_payload(exc)}
+
+    @mcp.tool()
+    async def generate_report(
+        min_priority: Literal["P1", "P2", "P3", "P4"] | None = None,
+    ) -> dict[str, Any]:
+        """Generate a self-contained HTML report of investigated findings.
+
+        Aggregates every investigated finding with its risk assessment,
+        evidence, exploit scenario, remediation options, and audit history;
+        imported-but-uninvestigated findings are listed separately. The file is
+        written (mode 0600) into the operator's reports directory
+        (RISKPROOF_REPORTS_DIR, default ~/.riskproof/reports). Output paths are
+        refused: like the import directory, the location is operator
+        configuration, never tool input.
+
+        Args:
+            min_priority: only include findings at this priority or more
+                urgent (e.g. "P2" keeps P1 and P2). Omit for everything. The
+                filter is disclosed in the report header either way.
+
+        Returns the written path plus the report summary counts.
+        """
+        try:
+            data = report_engine.build_report(services, min_priority)
+            page = report_engine.render_html(data)
+            target = report_engine.default_report_path(
+                services.settings.effective_reports_dir, data.generated_at
+            )
+            written = report_engine.write_report_file(page, target)
+            return {
+                "ok": True,
+                "path": str(written),
+                "summary": data.summary.model_dump(),
+                "min_priority": data.min_priority.value if data.min_priority else None,
+                "note": (
+                    "The report contains vulnerability data and is written with owner-only "
+                    "permissions; share it only with people who may see these findings."
                 ),
             }
         except RiskProofError as exc:

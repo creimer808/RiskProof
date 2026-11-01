@@ -23,6 +23,7 @@ Key settings (all optional, secure defaults):
 | `RISKPROOF_OFFLINE` | `false` | Force SAMPLE fixture intel |
 | `RISKPROOF_IMPORT_DIR` | `~/.riskproof/imports` | Only directory `import_nessus` reads from |
 | `RISKPROOF_ASSET_INVENTORY` | `~/.riskproof/assets.json` | Operator asset context (criticality, exposure) for real findings |
+| `RISKPROOF_REPORTS_DIR` | `~/.riskproof/reports` | Where `generate_report` writes HTML reports (tool input cannot choose paths) |
 | `RISKPROOF_MAX_IMPORT_BYTES` | `536870912` | Largest `.nessus` file accepted |
 | `RISKPROOF_TENABLE_BASE_URL` | `https://cloud.tenable.com` | Tenable VM API host (https only) |
 | `RISKPROOF_ALLOWED_TARGETS` | *(empty = deny all)* | Validation allowlist (hosts/IPs/CIDRs, comma-separated) |
@@ -66,10 +67,11 @@ claude mcp add riskproof -- uv --directory /absolute/path/to/RiskProof run riskp
 
 ### Any MCP-compatible client
 
-The server exposes ten tools over stdio:
+The server exposes eleven tools over stdio:
 `import_nessus`, `import_tenable`, `investigate_finding`, `enrich_threat_intel`,
 `verify_applicability`, `validate_exposure`, `analyze_exploit_scenario`,
-`simulate_remediation`, `execute_risk_policy`, `get_audit_trail`.
+`simulate_remediation`, `execute_risk_policy`, `get_audit_trail`,
+`generate_report`.
 
 ## Import a real scan
 
@@ -89,6 +91,25 @@ candidate `finding_id`s (live CISA KEV first, then severity/VPR/CVSS). A
 77 MB report with ~17k findings imports in a couple of seconds. Then:
 `investigate_finding(finding_ids=[...])` (max 25 per call) adds EPSS/KEV intel
 and the risk assessment.
+
+### Generate an HTML report
+
+Once findings are investigated, produce a durable artifact:
+
+```bash
+uv run riskproof report                    # all investigated findings
+uv run riskproof report --min-priority P2  # only P1/P2
+uv run riskproof report --output out.html  # default: ./riskproof-report-<timestamp>.html
+```
+
+Or from an MCP session, ask for `generate_report` (same engine; the file lands
+in `RISKPROOF_REPORTS_DIR`, default `~/.riskproof/reports`, written with
+owner-only permissions). The report is read-only aggregation: executive rollup,
+priority queue with rationale, per-finding dimensions/evidence/scenario/
+remediation, pending actions, and the audit history. Priority filters are
+disclosed in the header, un-investigated imports are listed separately, and
+SAMPLE-fixture provenance is carried into the page. Reports contain
+vulnerability data — share them accordingly.
 
 ### From Tenable Vulnerability Management (Tenable One)
 

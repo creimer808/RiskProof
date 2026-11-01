@@ -16,6 +16,7 @@ DEFAULT_VALIDATION_METHODS = ["tcp_connect", "http_banner", "tls_cert_dates"]
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures"
 DEFAULT_IMPORT_DIR = Path("~/.riskproof/imports")
 DEFAULT_ASSET_INVENTORY = Path("~/.riskproof/assets.json")
+DEFAULT_REPORTS_DIR = Path("~/.riskproof/reports")
 
 
 class Settings(BaseSettings):
@@ -41,6 +42,10 @@ class Settings(BaseSettings):
     #: applied to real scan findings. Missing file = no inventory. Never
     #: editable through tool input. See riskproof.ingest.inventory.
     asset_inventory: Path | None = None
+
+    #: Directory where generate_report writes HTML reports. Operator
+    #: configuration: tool input can never choose output paths.
+    reports_dir: Path | None = None
 
     #: Allowlist for validation targets: hostnames, IPs, or CIDR ranges.
     #: Empty means NO target may be validated (fail closed).
@@ -88,6 +93,11 @@ class Settings(BaseSettings):
     @property
     def effective_asset_inventory(self) -> Path:
         base = self.asset_inventory if self.asset_inventory is not None else DEFAULT_ASSET_INVENTORY
+        return base.expanduser()
+
+    @property
+    def effective_reports_dir(self) -> Path:
+        base = self.reports_dir if self.reports_dir is not None else DEFAULT_REPORTS_DIR
         return base.expanduser()
 
     @property

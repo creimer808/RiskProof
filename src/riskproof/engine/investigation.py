@@ -103,7 +103,7 @@ class InvestigationReport(BaseModel):
                     "confidence": e.confidence.value,
                     "source": e.source,
                     # Caveats are stated once per response (see summarize_reports).
-                    "statement": _strip_caveats(e.statement),
+                    "statement": strip_caveats(e.statement),
                 }
                 for e in record.evidence
             ],
@@ -112,7 +112,8 @@ class InvestigationReport(BaseModel):
         }
 
 
-def _strip_caveats(statement: str) -> str:
+def strip_caveats(statement: str) -> str:
+    """Remove the per-statement caveats for compact views that state them once."""
     return statement.replace(f" {EPSS_CAVEAT}", "").replace(f" {KEV_CAVEAT}", "")
 
 

@@ -137,6 +137,17 @@ applicability checks, validation attempts including refusals, policy
 decisions) plus pending actions and their status. Use it to answer "what did
 we do and why", and cite it instead of reconstructing history from memory.
 
+### 9. Produce a report artifact (when the user wants something to keep/share)
+```
+generate_report(min_priority="P2")                # or omit for everything
+```
+Writes a self-contained HTML report (executive rollup, priority queue with
+rationale, per-finding evidence and audit history) into the operator's reports
+directory and returns the path plus summary counts. Output paths are operator
+configuration — never pass or accept a path. Tell the user the file location
+and that it is written owner-only; the report repeats the SAMPLE/live
+provenance and caveats, but repeat them in chat too.
+
 ## Quick CVE lookup (no finding context)
 
 For "what do you know about CVE-XXXX-YYYY?" just use:

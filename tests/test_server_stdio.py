@@ -29,6 +29,7 @@ EXPECTED_TOOLS = {
     "import_nessus",
     "import_tenable",
     "get_audit_trail",
+    "generate_report",
 }
 
 
@@ -41,6 +42,7 @@ def _server_params(tmp_path: Path) -> StdioServerParameters:
             "RISKPROOF_FIXTURES_DIR": str(REPO_ROOT / "fixtures"),
             "RISKPROOF_IMPORT_DIR": str(REPO_ROOT / "fixtures"),
             "RISKPROOF_ASSET_INVENTORY": str(tmp_path / "assets.json"),  # absent
+            "RISKPROOF_REPORTS_DIR": str(tmp_path / "reports"),
             "TENABLE_ACCESS_KEY": "",
             "TENABLE_SECRET_KEY": "",
             "PYTHONUNBUFFERED": "1",
@@ -172,6 +174,21 @@ async def test_stdio_server_full_workflow(tmp_path: Path):
             assert trail["pending_actions"]
             recent = _payload((await session.call_tool("get_audit_trail", {})).content[0])
             assert recent["entries"][0]["outcome"] == "refused"
+
+            # 6. generate_report writes a filtered, owner-only HTML report to the
+            #    operator-configured reports directory (never an input path).
+            generated = _payload(
+                (await session.call_tool("generate_report", {"min_priority": "P2"})).content[0]
+            )
+            assert generated["ok"] is True
+            report_path = Path(generated["path"])
+            assert report_path.parent == tmp_path / "reports"
+            assert report_path.exists()
+            assert (report_path.stat().st_mode & 0o777) == 0o600
+            page = report_path.read_text(encoding="utf-8")
+            assert "SAMPLE" in page  # fixture provenance is disclosed
+            assert generated["summary"]["shown"] <= generated["summary"]["investigated_total"]
+            assert generated["min_priority"] == "P2"
 
 
 async def test_stdio_invalid_fixture_name_returns_structured_error(tmp_path: Path):
