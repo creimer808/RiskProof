@@ -166,8 +166,22 @@ class AuditLog:
         )
         return int(cur.lastrowid or 0)
 
-    def recent(self, limit: int = 50) -> list[dict]:
-        rows = self._db.query_all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+    def recent(self, limit: int = 50, finding_id: str | None = None) -> list[dict]:
+        """Newest entries first; optionally only those about one finding.
+
+        An entry is about a finding when it is the subject (investigation,
+        applicability, policy) or named in details (validation checks, whose
+        subject is the host:port).
+        """
+        if finding_id is None:
+            rows = self._db.query_all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+        else:
+            rows = self._db.query_all(
+                "SELECT * FROM audit_log WHERE subject = ? "
+                "OR (details IS NOT NULL AND json_extract(details, '$.finding_id') = ?) "
+                "ORDER BY id DESC LIMIT ?",
+                (finding_id, finding_id, limit),
+            )
         out = []
         for row in rows:
             entry = dict(row)

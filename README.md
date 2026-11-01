@@ -106,6 +106,11 @@ actually matters and why."* Configuration details: [docs/usage.md](docs/usage.md
 | `analyze_exploit_scenario` | **Working** | CVSS-vector prerequisites, exposure, KEV-grounded consequences, explicit uncertainties |
 | `simulate_remediation` | **Working (what-if)** | Compares vendor fix / exposure restriction / verification re-scan with expected effects |
 | `execute_risk_policy` | **Working (dry-run)** | Transparent P1–P4 decision table; records approval-gated actions in the audit trail |
+| `get_audit_trail` | **Working (read-only)** | Per-finding or recent audit history plus pending actions and their status |
+
+`investigate_finding` returns a compact summary by default (`detail="full"` for
+everything); `analyze_exploit_scenario` and `simulate_remediation` accept
+`finding_ids` (up to 25) as well as a single `finding_id`.
 
 Not implemented yet (deliberately): delegating to Tenable's Hexa MCP (direct API export
 is the fallback), ticketing executors, attack-path graphs. See [PLAN.md](PLAN.md).

@@ -66,10 +66,10 @@ claude mcp add riskproof -- uv --directory /absolute/path/to/RiskProof run riskp
 
 ### Any MCP-compatible client
 
-The server exposes seven tools over stdio:
-`investigate_finding`, `enrich_threat_intel`, `verify_applicability`,
-`validate_exposure`, `analyze_exploit_scenario`, `simulate_remediation`,
-`execute_risk_policy`.
+The server exposes ten tools over stdio:
+`import_nessus`, `import_tenable`, `investigate_finding`, `enrich_threat_intel`,
+`verify_applicability`, `validate_exposure`, `analyze_exploit_scenario`,
+`simulate_remediation`, `execute_risk_policy`, `get_audit_trail`.
 
 ## Import a real scan
 

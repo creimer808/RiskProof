@@ -71,9 +71,16 @@ KEV-listed; note that this does not prove that CVE applies to this host.
 investigate_finding(fixture="findings_sample.json")        # offline demo data
 investigate_finding(finding={...normalized finding...})     # inline finding
 investigate_finding(finding_id="...")                       # previously ingested
+investigate_finding(finding_ids=[...])                      # up to 25 stored findings
 ```
 This produces the investigation record: evidence list with confidence labels,
 EPSS/KEV intel, open questions, applicability status, and the risk assessment.
+The default `detail="summary"` view gives you everything the reporting format
+needs. Intel provenance, SAMPLE notices and the EPSS/KEV caveats
+(`intel_caveats`) appear once per response; they still apply to every
+finding, so carry them into your report. Use `detail="full"` on a single
+finding when you need its description, plugin output (e.g. version evidence
+for step 3), or the basis lines behind each dimension.
 
 ### 2. Read the assessment before reacting
 The assessment separates: severity (CVSS/VPR), exploitation likelihood
@@ -98,7 +105,7 @@ the user how a human can authorize the target. Attach results to the finding.
 
 ### 5. Analyze the scenario
 ```
-analyze_exploit_scenario(finding_id=...)
+analyze_exploit_scenario(finding_id=...)          # or finding_ids=[...] (max 25)
 ```
 Returns prerequisites (derived from the CVSS vector), exposure analysis,
 consequences grounded in KEV/EPSS, and explicit uncertainties. Use its
@@ -106,7 +113,7 @@ consequences grounded in KEV/EPSS, and explicit uncertainties. Use its
 
 ### 6. Simulate remediation
 ```
-simulate_remediation(finding_id=...)
+simulate_remediation(finding_id=...)              # or finding_ids=[...] (max 25)
 ```
 Compare options (vendor fix, exposure restriction, verification re-scan) and
 their expected effects. Present as a what-if, and always recommend the
@@ -117,7 +124,18 @@ verification re-scan after any change.
 execute_risk_policy(finding_ids=[...])
 ```
 Returns P1–P4 decisions with rationale and the actions recorded (dry-run /
-pending approval). Report the recorded action IDs to the user.
+pending approval). Report the recorded action IDs to the user. Re-running is
+safe: outstanding actions are reused (`existing_action_ids`), not duplicated.
+Call it once per batch rather than once per finding.
+
+### 8. Review the audit trail
+```
+get_audit_trail(finding_id=...)                   # or omit for recent activity
+```
+Read-only. Shows how the finding was handled (investigation and priority,
+applicability checks, validation attempts including refusals, policy
+decisions) plus pending actions and their status. Use it to answer "what did
+we do and why", and cite it instead of reconstructing history from memory.
 
 ## Quick CVE lookup (no finding context)
 

@@ -109,3 +109,20 @@ class ThreatIntelBundle(BaseModel):
 
     def model_post_init(self, __context: object) -> None:
         self.cve_ids = [normalize_cve(c) for c in self.cve_ids]
+
+    def subset(self, cve_ids: list[str]) -> ThreatIntelBundle:
+        """The same bundle restricted to ``cve_ids`` (provenance and notices kept).
+
+        A batch investigation collects intel for every CVE in the batch; each
+        finding's record should carry only its own CVEs, or records (and tool
+        output) grow with findings x batch CVEs.
+        """
+        wanted = set(cve_ids)
+        return self.model_copy(
+            update={
+                "cve_ids": [c for c in self.cve_ids if c in wanted],
+                "epss": {c: v for c, v in self.epss.items() if c in wanted},
+                "kev_status": [s for s in self.kev_status if s.cve in wanted],
+                "notices": list(self.notices),
+            }
+        )

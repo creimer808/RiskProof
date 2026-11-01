@@ -24,6 +24,16 @@ from riskproof.validation.checks import ValidationResult
 
 _sequence = 0
 
+#: Caveats appended to every EPSS / KEV-listed evidence statement. Compact tool
+#: views may state them once per response instead (never drop them).
+EPSS_CAVEAT = (
+    "Statistical 30-day in-the-wild exploitation probability for the CVE — "
+    "not a claim about this specific system."
+)
+KEV_CAVEAT = (
+    "This means the vulnerability is exploited in the wild — not that this asset was compromised."
+)
+
 
 def _next_id(prefix: str, now: datetime) -> str:
     global _sequence
@@ -61,9 +71,7 @@ def _epss_evidence(cve: str, intel: ThreatIntelBundle, finding_id: str, now: dat
     elif entry.kind == "observation":
         percentile = f"{entry.percentile:.5f}" if entry.percentile is not None else "n/a"
         statement = (
-            f"FIRST EPSS for {cve}: {entry.score:.3f} (percentile {percentile}). "
-            "Statistical 30-day in-the-wild exploitation probability for the CVE — "
-            "not a claim about this specific system."
+            f"FIRST EPSS for {cve}: {entry.score:.3f} (percentile {percentile}). {EPSS_CAVEAT}"
         )
         confidence = Confidence.CONFIRMED
     else:
@@ -98,8 +106,7 @@ def _kev_evidence(cve: str, intel: ThreatIntelBundle, finding_id: str, now: date
         ransomware = entry.known_ransomware_campaign_use if entry else "unknown"
         statement = (
             f"{cve} is in the CISA KEV catalog ({status.catalog}; added {added}; "
-            f"ransomware campaign use: {ransomware}). This means the vulnerability "
-            "is exploited in the wild — not that this asset was compromised."
+            f"ransomware campaign use: {ransomware}). {KEV_CAVEAT}"
         )
         confidence = Confidence.CONFIRMED
     else:
@@ -219,7 +226,7 @@ def build_investigation_record(
     now = record.created_at
     record.evidence.append(_scanner_evidence(finding, now))
     if intel is not None:
-        record.intel = intel
+        record.intel = intel.subset(finding.cve_ids)
         for cve in finding.cve_ids:
             record.evidence.append(_epss_evidence(cve, intel, finding.finding_id, now))
             record.evidence.append(_kev_evidence(cve, intel, finding.finding_id, now))

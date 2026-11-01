@@ -28,6 +28,7 @@ EXPECTED_TOOLS = {
     "execute_risk_policy",
     "import_nessus",
     "import_tenable",
+    "get_audit_trail",
 }
 
 
@@ -99,9 +100,11 @@ async def test_stdio_server_full_workflow(tmp_path: Path):
             )
             assert result["ok"] is True
             assert result["count"] >= 5
+            assert result["detail"] == "summary"
             first = result["investigations"][0]
-            assert first["record"]["evidence"]
-            assert first["assessment"]["recommended_priority"] in ("P1", "P2", "P3", "P4")
+            assert first["evidence"]
+            assert first["priority"] in ("P1", "P2", "P3", "P4")
+            assert result["intel_provenance"][0]["epss_source"] == "sample-fixture"
 
             # 3. Scenario + remediation + policy on the Log4Shell finding.
             log4shell = next(
@@ -124,6 +127,15 @@ async def test_stdio_server_full_workflow(tmp_path: Path):
             )
             assert simulation["ok"] is True
             assert simulation["simulation"]["recommended_option_id"]
+
+            all_ids = [i["finding_id"] for i in result["investigations"]]
+            batch = _payload(
+                (
+                    await session.call_tool("analyze_exploit_scenario", {"finding_ids": all_ids})
+                ).content[0]
+            )
+            assert batch["ok"] is True
+            assert batch["count"] == len(all_ids)
 
             policy = _payload(
                 (
@@ -148,6 +160,18 @@ async def test_stdio_server_full_workflow(tmp_path: Path):
             assert denied["ok"] is False
             assert denied["error"]["code"] == "authorization_denied"
             assert "RISKPROOF_ALLOWED_TARGETS" in denied["error"]["message"]
+
+            # 5. The audit trail reconstructs what happened to the finding.
+            trail = _payload(
+                (await session.call_tool("get_audit_trail", {"finding_id": log4shell})).content[0]
+            )
+            assert trail["ok"] is True
+            actions = [e["action"] for e in trail["entries"]]
+            assert "investigate_finding" in actions
+            assert any(a.startswith("policy:") for a in actions)
+            assert trail["pending_actions"]
+            recent = _payload((await session.call_tool("get_audit_trail", {})).content[0])
+            assert recent["entries"][0]["outcome"] == "refused"
 
 
 async def test_stdio_invalid_fixture_name_returns_structured_error(tmp_path: Path):

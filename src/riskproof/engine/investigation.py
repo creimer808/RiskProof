@@ -8,12 +8,14 @@ degradation explicit in every output.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from riskproof.engine import policy_engine
 from riskproof.engine.evidence import (
+    EPSS_CAVEAT,
+    KEV_CAVEAT,
     apply_applicability_observation,
     build_investigation_record,
     build_validation_evidence,
@@ -32,7 +34,7 @@ from riskproof.ingest.fixtures import (
     load_findings_fixture,
 )
 from riskproof.models.evidence import InvestigationRecord
-from riskproof.models.findings import Finding, ServiceObservation
+from riskproof.models.findings import Finding, ServiceObservation, criticality_value
 from riskproof.models.intel import (
     EPSSObservation,
     EPSSUnavailable,
@@ -45,9 +47,16 @@ from riskproof.providers.fixtures_source import SAMPLE_NOTICE
 from riskproof.services import Services
 from riskproof.validation.checks import ValidationResult
 
-MAX_FIXTURE_FINDINGS = 25
+#: Most findings one call may investigate / analyze / simulate.
+MAX_BATCH_FINDINGS = 25
 
 IntelSource = Literal["auto", "live", "fixture"]
+
+FULL_DETAIL_HINT = (
+    "Summary view. detail='full' adds the finding's description, plugin output and "
+    "solution, evidence ids/timestamps/details, the raw intel bundle, and the basis "
+    "lines behind every risk dimension."
+)
 
 
 class InvestigationReport(BaseModel):
@@ -55,6 +64,79 @@ class InvestigationReport(BaseModel):
     finding: Finding
     record: InvestigationRecord
     assessment: RiskAssessment
+
+    def summary(self) -> dict[str, Any]:
+        """Compact, agent-facing view: everything needed to report on the
+        finding, without the bulky source text or repeated intel."""
+        f, record, a = self.finding, self.record, self.assessment
+        asset = f.asset
+        return {
+            "finding_id": f.finding_id,
+            "name": f.name,
+            "source": f.source,
+            "severity": f.severity.value,
+            "cvss_v3": f.cvss_v3.base_score if f.cvss_v3 else None,
+            "vpr": f.vpr.score if f.vpr else None,
+            "cve_ids": f.cve_ids,
+            "asset": {
+                "asset_id": asset.asset_id,
+                "hostname": asset.hostname,
+                "ip": asset.ip_address,
+                "port": f.port,
+                "criticality": criticality_value(asset),
+                "environment": asset.environment,
+                "internet_facing": asset.internet_facing,
+                "owner": asset.owner,
+            },
+            "priority": a.recommended_priority.value if a.recommended_priority else None,
+            "priority_rationale": a.priority_rationale,
+            "dimensions": {
+                "exploitation_likelihood": a.exploitation_likelihood.value,
+                "environmental_exposure": a.environmental_exposure.value,
+                "applicability": a.applicability.value,
+                "business_impact": a.business_impact.value,
+                "evidence_confidence": a.evidence_confidence.value,
+            },
+            "evidence": [
+                {
+                    "kind": e.kind.value,
+                    "confidence": e.confidence.value,
+                    "source": e.source,
+                    # Caveats are stated once per response (see summarize_reports).
+                    "statement": _strip_caveats(e.statement),
+                }
+                for e in record.evidence
+            ],
+            "evidence_by_confidence": confidence_summary(record),
+            "open_questions": record.open_questions,
+        }
+
+
+def _strip_caveats(statement: str) -> str:
+    return statement.replace(f" {EPSS_CAVEAT}", "").replace(f" {KEV_CAVEAT}", "")
+
+
+def summarize_reports(reports: list[InvestigationReport]) -> dict[str, Any]:
+    """Summaries plus intel provenance stated ONCE for the whole batch."""
+    notices: list[str] = []
+    provenance: set[tuple[str, str, bool]] = set()
+    for report in reports:
+        intel = report.record.intel
+        if intel is None:
+            continue
+        provenance.add((intel.epss_source, intel.kev_source, intel.degraded))
+        notices.extend(n for n in intel.notices if n not in notices)
+    return {
+        "investigations": [r.summary() for r in reports],
+        "intel_provenance": [
+            {"epss_source": epss, "kev_source": kev, "degraded": degraded}
+            for epss, kev, degraded in sorted(provenance)
+        ],
+        "intel_notices": notices,
+        "intel_caveats": {"epss": EPSS_CAVEAT, "kev_listed": KEV_CAVEAT},
+        "detail": "summary",
+        "note": FULL_DETAIL_HINT,
+    }
 
 
 def normalize_cve_list(cve_ids: list[str]) -> tuple[list[str], list[str]]:
@@ -200,9 +282,9 @@ async def investigate(
         )
     if fixture is not None:
         findings = _load_fixture_findings(services, fixture)
-        if len(findings) > MAX_FIXTURE_FINDINGS:
-            notices = findings[MAX_FIXTURE_FINDINGS:]
-            findings = findings[:MAX_FIXTURE_FINDINGS]
+        if len(findings) > MAX_BATCH_FINDINGS:
+            notices = findings[MAX_BATCH_FINDINGS:]
+            findings = findings[:MAX_BATCH_FINDINGS]
             services.audit.append(
                 actor=services.settings.audit_actor,
                 action="investigate_finding",
@@ -215,9 +297,9 @@ async def investigate(
             )
     elif finding_ids is not None:
         unique_ids = list(dict.fromkeys(finding_ids))
-        if not unique_ids or len(unique_ids) > MAX_FIXTURE_FINDINGS:
+        if not unique_ids or len(unique_ids) > MAX_BATCH_FINDINGS:
             raise InvalidInputError(
-                f"`finding_ids` must contain 1 to {MAX_FIXTURE_FINDINGS} distinct ids per call."
+                f"`finding_ids` must contain 1 to {MAX_BATCH_FINDINGS} distinct ids per call."
             )
         findings = [services.findings.get(fid) for fid in unique_ids]
     elif finding_id is not None:
@@ -252,10 +334,29 @@ async def investigate(
         if prior is not None:
             record = carry_forward(prior, record)
         services.investigations.save(record)
+        assessment = assess(f, record)
         reports.append(
             InvestigationReport(
-                finding_id=f.finding_id, finding=f, record=record, assessment=assess(f, record)
+                finding_id=f.finding_id, finding=f, record=record, assessment=assessment
             )
+        )
+        priority = assessment.recommended_priority
+        services.audit.append(
+            actor=services.settings.audit_actor,
+            action="investigate_finding",
+            subject=f.finding_id,
+            outcome=priority.value if priority else "unprioritized",
+            rationale="; ".join(assessment.priority_rationale) or None,
+            details={
+                "source": f.source,
+                "reinvestigation": prior is not None,
+                "intel": (
+                    f"{record.intel.epss_source}/{record.intel.kev_source}"
+                    if record.intel
+                    else None
+                ),
+                "inventory_rules": inventory_rules or None,
+            },
         )
     return reports
 
@@ -349,15 +450,17 @@ def recompute_assessment(
     return finding, record, assess(finding, record)
 
 
-def execute_risk_policy(
-    services: Services, finding_ids: list[str], policy: RiskPolicy
-) -> list[PolicyDecision]:
-    """Evaluate policy for a batch of findings — all or nothing.
-
-    Every finding is loaded and assessed BEFORE any action or audit entry is
-    written, so an unknown id cannot leave a half-recorded batch behind.
-    """
+def recompute_assessments(
+    services: Services, finding_ids: list[str], max_findings: int | None = None
+) -> list[tuple[Finding, InvestigationRecord, RiskAssessment]]:
+    """Load and assess a batch — all or nothing, every missing id reported."""
     unique_ids = list(dict.fromkeys(finding_ids))
+    if not unique_ids:
+        raise InvalidInputError("`finding_ids` must contain at least one id.")
+    if max_findings is not None and len(unique_ids) > max_findings:
+        raise InvalidInputError(
+            f"`finding_ids` must contain at most {max_findings} distinct ids per call."
+        )
     loaded: list[tuple[Finding, InvestigationRecord, RiskAssessment]] = []
     missing: list[str] = []
     for fid in unique_ids:
@@ -367,9 +470,21 @@ def execute_risk_policy(
             missing.append(fid)
     if missing:
         raise NotFoundError(
-            f"No investigation record for {missing}; nothing was recorded. Run "
+            f"No investigation record for {missing}; nothing was processed. Run "
             "investigate_finding on them first, or retry without them."
         )
+    return loaded
+
+
+def execute_risk_policy(
+    services: Services, finding_ids: list[str], policy: RiskPolicy
+) -> list[PolicyDecision]:
+    """Evaluate policy for a batch of findings — all or nothing.
+
+    Every finding is loaded and assessed BEFORE any action or audit entry is
+    written, so an unknown id cannot leave a half-recorded batch behind.
+    """
+    loaded = recompute_assessments(services, finding_ids)
     return [
         policy_engine.evaluate_policy(
             finding,

@@ -17,13 +17,16 @@ from mcp.server.fastmcp import FastMCP
 
 from riskproof.engine import importer, remediation, scenario
 from riskproof.engine import investigation as inv
-from riskproof.errors import RiskProofError, error_payload
+from riskproof.engine.risk import RiskAssessment
+from riskproof.errors import InvalidInputError, RiskProofError, error_payload
+from riskproof.models.evidence import InvestigationRecord
 from riskproof.models.findings import Finding, ServiceObservation
 from riskproof.models.policy import RiskPolicy
 from riskproof.services import Services
 
 IntelSource = Literal["auto", "live", "fixture"]
 SeverityName = Literal["critical", "high", "medium", "low", "info"]
+MAX_AUDIT_ENTRIES = 200
 FindingState = Literal["open", "reopened", "fixed"]
 
 
@@ -138,6 +141,7 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         include_intel: bool = True,
         intel_source: IntelSource = "auto",
         finding_ids: list[str] | None = None,
+        detail: Literal["summary", "full"] = "summary",
     ) -> dict[str, Any]:
         """Collect and normalize evidence for vulnerability finding(s).
 
@@ -153,6 +157,13 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         Builds the investigation record: scanner evidence, EPSS/KEV intel,
         asset context, open questions, applicability status, and the risk
         dimension assessment. Use fixture="findings_sample.json" for the demo.
+
+        detail="summary" (default) returns per finding: priority + rationale,
+        the risk dimensions, asset context, every evidence statement with its
+        confidence label, and open questions; intel provenance/notices are
+        stated once for the batch. detail="full" adds description, plugin
+        output, solution, raw intel, and per-dimension basis lines — use it for
+        a single finding when you need that text (e.g. version evidence).
         """
         try:
             reports = await inv.investigate(
@@ -164,11 +175,14 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
                 include_intel=include_intel,
                 intel_source=intel_source,
             )
-            return {
-                "ok": True,
-                "investigations": [r.model_dump(mode="json") for r in reports],
-                "count": len(reports),
-            }
+            if detail == "full":
+                body = {
+                    "investigations": [r.model_dump(mode="json") for r in reports],
+                    "detail": "full",
+                }
+            else:
+                body = inv.summarize_reports(reports)
+            return {"ok": True, **body, "count": len(reports)}
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}
 
@@ -229,8 +243,21 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}
 
+    def _selected(
+        finding_id: str | None, finding_ids: list[str] | None
+    ) -> list[tuple[Finding, InvestigationRecord, RiskAssessment]]:
+        if (finding_id is None) == (finding_ids is None):
+            raise InvalidInputError("Provide exactly one of `finding_id` or `finding_ids`.")
+        if finding_id is not None:
+            return [inv.recompute_assessment(services, finding_id)]
+        assert finding_ids is not None
+        return inv.recompute_assessments(services, finding_ids, inv.MAX_BATCH_FINDINGS)
+
     @mcp.tool()
-    async def analyze_exploit_scenario(finding_id: str) -> dict[str, Any]:
+    async def analyze_exploit_scenario(
+        finding_id: str | None = None,
+        finding_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Evaluate exploit prerequisites, exposure, consequences, uncertainties.
 
         Deterministic analysis derived strictly from the investigation record:
@@ -238,31 +265,50 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         consequences, and explicit uncertainties. Never claims successful
         exploitation or compromise without direct evidence.
 
-        Args:
-            finding_id: a finding previously processed by investigate_finding.
+        Provide EXACTLY ONE of:
+            finding_id: one finding processed by investigate_finding
+                (returns `scenario`).
+            finding_ids: up to 25 such findings in one call (returns
+                `scenarios`; all-or-nothing if any id is unknown).
         """
         try:
-            finding, record, assessment = inv.recompute_assessment(services, finding_id)
-            exploit_scenario = scenario.build_exploit_scenario(finding, record, assessment)
-            return {"ok": True, "scenario": exploit_scenario.model_dump(mode="json")}
+            selected = _selected(finding_id, finding_ids)
+            scenarios = [
+                scenario.build_exploit_scenario(f, r, a).model_dump(mode="json")
+                for f, r, a in selected
+            ]
+            if finding_id is not None:
+                return {"ok": True, "scenario": scenarios[0]}
+            return {"ok": True, "scenarios": scenarios, "count": len(scenarios)}
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}
 
     @mcp.tool()
-    async def simulate_remediation(finding_id: str) -> dict[str, Any]:
+    async def simulate_remediation(
+        finding_id: str | None = None,
+        finding_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Compare remediation options and their expected risk effects (what-if).
 
         Deterministic simulation over the investigation record: vendor fix,
         exposure restriction, verification re-scan. Nothing is executed; effects
         are expectations, not guarantees.
 
-        Args:
-            finding_id: a finding previously processed by investigate_finding.
+        Provide EXACTLY ONE of:
+            finding_id: one finding processed by investigate_finding
+                (returns `simulation`).
+            finding_ids: up to 25 such findings in one call (returns
+                `simulations`; all-or-nothing if any id is unknown).
         """
         try:
-            finding, record, assessment = inv.recompute_assessment(services, finding_id)
-            simulation = remediation.simulate_remediation(finding, record, assessment)
-            return {"ok": True, "simulation": simulation.model_dump(mode="json")}
+            selected = _selected(finding_id, finding_ids)
+            simulations = [
+                remediation.simulate_remediation(f, r, a).model_dump(mode="json")
+                for f, r, a in selected
+            ]
+            if finding_id is not None:
+                return {"ok": True, "simulation": simulations[0]}
+            return {"ok": True, "simulations": simulations, "count": len(simulations)}
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}
 
@@ -297,5 +343,41 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
                     "ticketing system is contacted."
                 ),
             }
+        except RiskProofError as exc:
+            return {"ok": False, "error": error_payload(exc)}
+
+    @mcp.tool()
+    async def get_audit_trail(
+        finding_id: str | None = None,
+        limit: int = 50,
+        include_pending_actions: bool = True,
+    ) -> dict[str, Any]:
+        """Read the append-only audit trail (read-only; changes nothing).
+
+        Use it to reconstruct how a finding was handled — investigation and
+        priority, applicability checks, validation attempts (including
+        refusals), policy decisions — or to review recent activity.
+
+        Args:
+            finding_id: only entries about this finding (omit for all activity).
+            limit: newest entries to return (1-200).
+            include_pending_actions: also list policy actions recorded for
+                human approval/execution, with their status.
+        """
+        try:
+            limit = max(1, min(int(limit), MAX_AUDIT_ENTRIES))
+            entries = services.audit.recent(limit=limit, finding_id=finding_id)
+            if finding_id is not None and not entries:
+                services.findings.get(finding_id)  # unknown id -> not_found, not silence
+            result: dict[str, Any] = {
+                "ok": True,
+                "finding_id": finding_id,
+                "entries": entries,
+                "count": len(entries),
+                "order": "newest first",
+            }
+            if include_pending_actions:
+                result["pending_actions"] = services.pending.list_open(finding_id, limit)
+            return result
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}

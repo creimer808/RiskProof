@@ -41,7 +41,7 @@ async def test_duplicate_ids_in_one_call_are_evaluated_once(services):
 
 async def test_unknown_id_records_nothing(services):
     await inv.investigate(services, fixture="findings_sample.json")
-    with pytest.raises(NotFoundError, match="nothing was recorded") as excinfo:
+    with pytest.raises(NotFoundError, match="nothing was processed") as excinfo:
         inv.execute_risk_policy(services, [LOG4SHELL, "nope", "also-nope"], RiskPolicy())
     assert "nope" in str(excinfo.value) and "also-nope" in str(excinfo.value)
     assert services.pending.list_open() == []
