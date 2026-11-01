@@ -15,14 +15,16 @@ from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from riskproof.engine import importer, policy_engine, remediation, scenario
 from riskproof.engine import investigation as inv
-from riskproof.engine import policy_engine, remediation, scenario
 from riskproof.errors import RiskProofError, error_payload
 from riskproof.models.findings import Finding, ServiceObservation
 from riskproof.models.policy import RiskPolicy
 from riskproof.services import Services
 
 IntelSource = Literal["auto", "live", "fixture"]
+SeverityName = Literal["critical", "high", "medium", "low", "info"]
+FindingState = Literal["open", "reopened", "fixed"]
 
 
 def register_tools(mcp: FastMCP, services: Services) -> None:
@@ -53,12 +55,89 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
             return {"ok": False, "error": error_payload(exc)}
 
     @mcp.tool()
+    async def import_nessus(
+        file: str,
+        min_severity: SeverityName = "low",
+        only_with_cve: bool = False,
+        top_n: int = 25,
+    ) -> dict[str, Any]:
+        """Import a .nessus (v2 XML) report and summarize it for triage.
+
+        Args:
+            file: bare file name (e.g. "Weekly_Network_Scan.nessus") inside the
+                server's import directory. Paths are refused; a human operator
+                controls the directory via RISKPROOF_IMPORT_DIR.
+            min_severity: drop findings below this scanner severity ("low"
+                excludes informational plugin noise).
+            only_with_cve: keep only findings that reference at least one CVE.
+            top_n: how many ranked candidates to return (max 100).
+
+        Stores findings and returns totals, severity counts, worst hosts,
+        most widespread plugins, and ranked candidate finding_ids. Findings are
+        NOT enriched or assessed yet: pass candidates to investigate_finding
+        (finding_ids=[...]) for EPSS/KEV intel and the risk assessment. Candidate
+        ranking is scanner severity/VPR/CVSS, not exploitation intelligence.
+        """
+        try:
+            summary = await importer.import_nessus(
+                services, file, min_severity, only_with_cve, top_n
+            )
+            return {"ok": True, **summary}
+        except RiskProofError as exc:
+            return {"ok": False, "error": error_payload(exc)}
+
+    @mcp.tool()
+    async def import_tenable(
+        severity: list[SeverityName] | None = None,
+        state: list[FindingState] | None = None,
+        since_days: int | None = None,
+        cidr_range: str | None = None,
+        limit: int = 5000,
+        only_with_cve: bool = False,
+        top_n: int = 25,
+    ) -> dict[str, Any]:
+        """Import findings from Tenable Vulnerability Management (Tenable One) via API.
+
+        Runs a read-only vulnerability export. Credentials come from the
+        server's environment (TENABLE_ACCESS_KEY / TENABLE_SECRET_KEY) and can
+        never be supplied or changed through this tool; if they are missing the
+        error tells the human operator what to set.
+
+        Args:
+            severity: severities to export (default ["critical", "high"]).
+            state: finding states (default ["open", "reopened"]).
+            since_days: only findings last seen in the past N days (1-3650).
+            cidr_range: restrict to assets in this CIDR, e.g. "10.0.0.0/24".
+            limit: max findings to import (default 5000, max 50000).
+            only_with_cve: keep only findings that reference a CVE.
+            top_n: how many ranked candidates to return (max 100).
+
+        Returns the same triage summary as import_nessus, with provenance
+        source="tenable". Findings are stored but not yet enriched or assessed.
+        """
+        try:
+            summary = await importer.import_tenable(
+                services,
+                severity=severity,
+                state=state,
+                since_days=since_days,
+                cidr_range=cidr_range,
+                limit=limit,
+                only_with_cve=only_with_cve,
+                top_n=top_n,
+            )
+            return {"ok": True, **summary}
+        except RiskProofError as exc:
+            return {"ok": False, "error": error_payload(exc)}
+
+    @mcp.tool()
     async def investigate_finding(
         finding: Finding | None = None,
         fixture: str | None = None,
         finding_id: str | None = None,
         include_intel: bool = True,
         intel_source: IntelSource = "auto",
+        finding_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Collect and normalize evidence for vulnerability finding(s).
 
@@ -67,7 +146,9 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
           validated server-side)
         - `fixture`: a fixture file name in the fixtures directory, e.g.
           "findings_sample.json" (ingests all findings in it)
-        - `finding_id`: re-open a previously ingested finding
+        - `finding_id`: re-open a previously ingested finding (including ones
+          stored by import_nessus / import_tenable)
+        - `finding_ids`: up to 25 previously stored findings in one call
 
         Builds the investigation record: scanner evidence, EPSS/KEV intel,
         asset context, open questions, applicability status, and the risk
@@ -79,6 +160,7 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
                 finding=finding,
                 fixture=fixture,
                 finding_id=finding_id,
+                finding_ids=finding_ids,
                 include_intel=include_intel,
                 intel_source=intel_source,
             )

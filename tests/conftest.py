@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -14,12 +15,22 @@ FIXTURES = REPO_ROOT / "fixtures"
 
 
 @pytest.fixture()
-def settings(tmp_path: Path) -> Settings:
+def import_dir(tmp_path: Path) -> Path:
+    """An operator-controlled import directory holding the SAMPLE .nessus report."""
+    directory = tmp_path / "imports"
+    directory.mkdir()
+    shutil.copy(FIXTURES / "sample_scan.nessus", directory / "sample_scan.nessus")
+    return directory
+
+
+@pytest.fixture()
+def settings(tmp_path: Path, import_dir: Path) -> Settings:
     return Settings(
         _env_file=None,  # type: ignore[call-arg]
         db_path=tmp_path / "test.db",
         offline=True,
         fixtures_dir=FIXTURES,
+        import_dir=import_dir,
         allowed_targets=["127.0.0.1", "::1", "localhost"],
         approved_validation_methods=["tcp_connect", "http_banner", "tls_cert_dates"],
         dry_run=True,

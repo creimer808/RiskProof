@@ -42,6 +42,20 @@ class FindingRepository:
             ),
         )
 
+    def save_many(self, findings: list[Finding]) -> None:
+        """Upsert many findings in one transaction (bulk imports)."""
+        now = iso(utcnow())
+        self._db.executemany(
+            "INSERT INTO findings(finding_id, source, severity, payload, ingested_at) "
+            "VALUES(?, ?, ?, ?, ?) "
+            "ON CONFLICT(finding_id) DO UPDATE SET payload=excluded.payload, "
+            "source=excluded.source, severity=excluded.severity",
+            [
+                (f.finding_id, f.source, f.severity.value, f.model_dump_json(), now)
+                for f in findings
+            ],
+        )
+
     def get(self, finding_id: str) -> Finding:
         row = self._db.query_one("SELECT payload FROM findings WHERE finding_id = ?", (finding_id,))
         if row is None:

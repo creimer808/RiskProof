@@ -25,13 +25,19 @@ def build_client(
     base_url: str | None = None,
     timeout: float = 15.0,
     transport: httpx.AsyncBaseTransport | None = None,
+    follow_redirects: bool = True,
 ) -> httpx.AsyncClient:
-    """Create an httpx client. ``transport`` is injectable for tests."""
+    """Create an httpx client. ``transport`` is injectable for tests.
+
+    Pass ``follow_redirects=False`` for credentialed clients: httpx only strips
+    the ``Authorization`` header on cross-origin redirects, not custom API-key
+    headers.
+    """
     kwargs: dict = {
         "timeout": httpx.Timeout(timeout),
         "transport": transport,
         "headers": {"User-Agent": USER_AGENT, "Accept": "application/json"},
-        "follow_redirects": True,
+        "follow_redirects": follow_redirects,
     }
     if base_url:
         kwargs["base_url"] = base_url

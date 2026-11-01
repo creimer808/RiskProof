@@ -44,6 +44,23 @@ No exploit payloads, no credential spraying, no service crashing. Every result
 carries the disclaimer that it does **not** demonstrate exploitability and that
 inconclusive results do **not** suppress findings.
 
+## Import confinement and Tenable credentials
+
+- `import_nessus` takes a bare file name only. It must match a strict
+  `*.nessus` pattern, resolve **directly inside** the operator-configured
+  `RISKPROOF_IMPORT_DIR` (so `..`, separators, and symlinks that escape are
+  refused), and be under `RISKPROOF_MAX_IMPORT_BYTES`.
+- `import_tenable` reads `TENABLE_ACCESS_KEY` / `TENABLE_SECRET_KEY` from the
+  server environment only. They are not accepted from tool input, not stored in
+  the DB or audit log, not included in errors or `repr`, and the base URL must
+  be https. Redirects are **not followed**, so the key header can never be
+  forwarded to another host.
+- The client is read-only against Tenable (create/poll/download/cancel an
+  export job). Export identifiers from responses are validated before use in a
+  URL path, and every record is normalized through length-limited models.
+- Importing stores findings only. Enrichment and assessment still happen in
+  `investigate_finding`, and candidate ranking states what it used.
+
 ## Untrusted data handling
 
 - `.nessus` files are parsed with `defusedxml` (entity-expansion/XXE safe); a

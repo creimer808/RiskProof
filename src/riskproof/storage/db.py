@@ -76,6 +76,11 @@ class Database:
         self._conn.commit()
         return cur
 
+    def executemany(self, sql: str, rows: list[tuple]) -> None:
+        """Run one statement for many rows in a single transaction."""
+        with self._conn:
+            self._conn.executemany(sql, rows)
+
     def query_one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         return self._conn.execute(sql, params).fetchone()
 

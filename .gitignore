@@ -17,6 +17,9 @@ build/
 !.env.example
 
 # Local data
+# Real scan exports are sensitive; only fixtures/ holds (synthetic) .nessus files.
+/*.nessus
+/imports/
 *.db
 *.db-wal
 *.db-shm

@@ -182,11 +182,13 @@ async def investigate(
     include_intel: bool = True,
     intel_source: IntelSource = "auto",
     include_assets_fixture: bool = True,
+    finding_ids: list[str] | None = None,
 ) -> list[InvestigationReport]:
-    selectors = [s for s in (finding, fixture, finding_id) if s is not None]
+    selectors = [s for s in (finding, fixture, finding_id, finding_ids) if s is not None]
     if len(selectors) != 1:
         raise InvalidInputError(
-            "Provide exactly one of: inline `finding`, `fixture` name, or `finding_id`."
+            "Provide exactly one of: inline `finding`, `fixture` name, `finding_id`, "
+            "or `finding_ids`."
         )
     if fixture is not None:
         findings = _load_fixture_findings(services, fixture)
@@ -203,6 +205,13 @@ async def investigate(
                     f"processed {len(findings)}."
                 ),
             )
+    elif finding_ids is not None:
+        unique_ids = list(dict.fromkeys(finding_ids))
+        if not unique_ids or len(unique_ids) > MAX_FIXTURE_FINDINGS:
+            raise InvalidInputError(
+                f"`finding_ids` must contain 1 to {MAX_FIXTURE_FINDINGS} distinct ids per call."
+            )
+        findings = [services.findings.get(fid) for fid in unique_ids]
     elif finding_id is not None:
         findings = [services.findings.get(finding_id)]
     else:

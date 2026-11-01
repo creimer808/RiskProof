@@ -21,6 +21,9 @@ Key settings (all optional, secure defaults):
 | --- | --- | --- |
 | `RISKPROOF_DB_PATH` | `~/.riskproof/riskproof.db` | SQLite storage |
 | `RISKPROOF_OFFLINE` | `false` | Force SAMPLE fixture intel |
+| `RISKPROOF_IMPORT_DIR` | `~/.riskproof/imports` | Only directory `import_nessus` reads from |
+| `RISKPROOF_MAX_IMPORT_BYTES` | `536870912` | Largest `.nessus` file accepted |
+| `RISKPROOF_TENABLE_BASE_URL` | `https://cloud.tenable.com` | Tenable VM API host (https only) |
 | `RISKPROOF_ALLOWED_TARGETS` | *(empty = deny all)* | Validation allowlist (hosts/IPs/CIDRs, comma-separated) |
 | `RISKPROOF_DRY_RUN` | `true` | Record actions instead of executing |
 | `RISKPROOF_REQUIRE_APPROVAL` | `true` | All policy actions need human approval |
@@ -66,6 +69,43 @@ The server exposes seven tools over stdio:
 `investigate_finding`, `enrich_threat_intel`, `verify_applicability`,
 `validate_exposure`, `analyze_exploit_scenario`, `simulate_remediation`,
 `execute_risk_policy`.
+
+## Import a real scan
+
+### From a `.nessus` file
+
+Put the file in the import directory (or point `RISKPROOF_IMPORT_DIR` at the
+folder that holds it), then ask the agent to import it:
+
+```bash
+claude mcp add riskproof -e RISKPROOF_IMPORT_DIR=/path/to/scans -- \
+  uv --directory /absolute/path/to/RiskProof run riskproof serve
+```
+
+`import_nessus(file="Weekly_Network_Scan.nessus", min_severity="high")` stores
+the findings and returns totals, worst hosts, widest plugins, and ranked
+candidate `finding_id`s (live CISA KEV first, then severity/VPR/CVSS). A
+77 MB report with ~17k findings imports in a couple of seconds. Then:
+`investigate_finding(finding_ids=[...])` (max 25 per call) adds EPSS/KEV intel
+and the risk assessment.
+
+### From Tenable Vulnerability Management (Tenable One)
+
+Set the API keys in the **server's environment** (never in tool input, never
+in `.env`):
+
+```bash
+claude mcp add riskproof -e TENABLE_ACCESS_KEY=... -e TENABLE_SECRET_KEY=... -- \
+  uv --directory /absolute/path/to/RiskProof run riskproof serve
+```
+
+`import_tenable(severity=["critical","high"], since_days=30, cidr_range="10.0.0.0/24")`
+runs a read-only vulnerability export (`POST /vulns/export`, poll status,
+download chunks) and returns the same summary. Findings are stored with
+`source="tenable"`; the audit log records the export UUID and filters, never
+the keys. The key pair's Tenable user needs permission to export
+vulnerabilities. Status: covered by mock-transport tests only — verify against
+a real tenant before relying on it.
 
 ## Example session
 

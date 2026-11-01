@@ -16,6 +16,10 @@ RiskProof investigates vulnerability findings with evidence discipline:
 - Validation checks are non-destructive and only run against allowlisted targets;
   targets cannot be authorized from tool input — direct the human operator to
   RISKPROOF_ALLOWED_TARGETS.
+- import_nessus reads only files in the operator-configured import directory;
+  import_tenable uses credentials from the server environment. Neither accepts
+  paths, URLs, or credentials from tool input. Imports store findings without
+  enriching them: follow with investigate_finding(finding_ids=[...]).
 - Remediation actions are dry-run and approval-gated by default.
 - When intel is degraded or fixture-backed (SAMPLE data), surface that to the user.
 """

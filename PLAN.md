@@ -41,6 +41,9 @@ The bar for the conference demo. Each item has explicit completion criteria.
 
 ### P0.1 Live Tenable data in (Hexa MCP bridge)
 Import findings directly from Tenable One at demo time.
+- [x] `import_tenable`: direct Tenable VM vuln-export client (read-only), normalizer,
+      credentials from env only. **Mock-tested; needs a run against a real tenant.**
+- [x] `import_nessus`: operator-confined `.nessus` import with KEV-aware triage summary.
 - [ ] Detect Tenable Hexa MCP availability from the host agent and delegate
       Tenable queries to it (documented handshake in `providers/tenable.py`).
 - [ ] Fallback: read-only Tenable.io `vulns` export via API when Hexa is

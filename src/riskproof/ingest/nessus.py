@@ -8,7 +8,6 @@ traceability only — they never drive behavior.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from typing import Any
 from defusedxml.ElementTree import parse as defused_parse
 
 from riskproof.errors import InvalidInputError
+from riskproof.ingest.common import slugify as _slug
 from riskproof.models.findings import (
     NESSUS_SEVERITY_MAP,
     Asset,
@@ -26,11 +26,6 @@ from riskproof.models.findings import (
 )
 
 _NESSUS_DATE = "%a %b %d %H:%M:%S %Y"
-_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-
-
-def _slug(value: str) -> str:
-    return _SLUG_RE.sub("_", value)[:120]
 
 
 def _text(element: Any, tag: str) -> str | None:

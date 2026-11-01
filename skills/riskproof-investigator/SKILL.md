@@ -46,6 +46,21 @@ we know, and what should we do about it?*
 
 Run this loop per finding (or over a fixture dataset):
 
+### 0. Import a real scan (if the user has one)
+```
+import_nessus(file="Weekly_Network_Scan.nessus", min_severity="high")   # file in the import dir
+import_tenable(severity=["critical","high"], since_days=30)              # Tenable One API
+```
+Imports store findings and return a triage summary with ranked `candidates`;
+they do NOT enrich or assess. Report the totals and filters honestly (how many
+parsed vs imported), then investigate candidates in batches:
+`investigate_finding(finding_ids=[...])` (max 25). Candidate ranking uses the live
+CISA KEV catalog when available — say so, and say if it was unavailable. Never ask
+the user to paste Tenable keys into chat; if `import_tenable` reports missing
+credentials, tell the human operator to set them in the server environment.
+A patch/rollup finding that bundles many CVEs is flagged if ANY one CVE is
+KEV-listed; note that this does not prove that CVE applies to this host.
+
 ### 1. Ingest and enrich
 ```
 investigate_finding(fixture="findings_sample.json")        # offline demo data

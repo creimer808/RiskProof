@@ -52,5 +52,5 @@ def build_services(settings: Settings) -> Services:
             max_age_hours=settings.kev_max_age_hours,
         ),
         fixture_intel=FixtureIntelSource(settings.effective_fixtures_dir),
-        tenable=TenableBridge(),
+        tenable=TenableBridge(settings.tenable_base_url),
     )

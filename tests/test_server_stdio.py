@@ -26,6 +26,8 @@ EXPECTED_TOOLS = {
     "analyze_exploit_scenario",
     "simulate_remediation",
     "execute_risk_policy",
+    "import_nessus",
+    "import_tenable",
 }
 
 
@@ -36,6 +38,9 @@ def _server_params(tmp_path: Path) -> StdioServerParameters:
             "RISKPROOF_OFFLINE": "true",
             "RISKPROOF_DB_PATH": str(tmp_path / "stdio-test.db"),
             "RISKPROOF_FIXTURES_DIR": str(REPO_ROOT / "fixtures"),
+            "RISKPROOF_IMPORT_DIR": str(REPO_ROOT / "fixtures"),
+            "TENABLE_ACCESS_KEY": "",
+            "TENABLE_SECRET_KEY": "",
             "PYTHONUNBUFFERED": "1",
         }
     )
@@ -158,3 +163,48 @@ async def test_stdio_invalid_fixture_name_returns_structured_error(tmp_path: Pat
             )
             assert result["ok"] is False
             assert result["error"]["code"] == "invalid_input"
+
+
+async def test_stdio_import_nessus_then_batch_investigate(tmp_path: Path):
+    with anyio.fail_after(90):
+        async with (
+            stdio_client(_server_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+
+            imported = _payload(
+                (
+                    await session.call_tool(
+                        "import_nessus", {"file": "sample_scan.nessus", "min_severity": "medium"}
+                    )
+                ).content[0]
+            )
+            assert imported["ok"] is True
+            assert imported["provenance"]["source"] == "nessus"
+            ids = [c["finding_id"] for c in imported["candidates"]]
+            assert ids
+
+            investigated = _payload(
+                (
+                    await session.call_tool(
+                        "investigate_finding",
+                        {"finding_ids": ids, "intel_source": "fixture"},
+                    )
+                ).content[0]
+            )
+            assert investigated["ok"] is True
+            assert investigated["count"] == len(ids)
+
+            # Paths are refused: the agent cannot point the server elsewhere.
+            refused = _payload(
+                (await session.call_tool("import_nessus", {"file": "../pyproject.toml"})).content[0]
+            )
+            assert refused["ok"] is False
+            assert refused["error"]["code"] == "invalid_input"
+
+            # No credentials in the environment: a clear operator instruction, no data.
+            no_creds = _payload((await session.call_tool("import_tenable", {})).content[0])
+            assert no_creds["ok"] is False
+            assert no_creds["error"]["code"] == "provider_unavailable"
+            assert "TENABLE_ACCESS_KEY" in no_creds["error"]["message"]

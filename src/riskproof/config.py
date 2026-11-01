@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 DEFAULT_VALIDATION_METHODS = ["tcp_connect", "http_banner", "tls_cert_dates"]
 
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures"
+DEFAULT_IMPORT_DIR = Path("~/.riskproof/imports")
 
 
 class Settings(BaseSettings):
@@ -29,6 +30,11 @@ class Settings(BaseSettings):
     db_path: Path = Path("~/.riskproof/riskproof.db").expanduser()
     offline: bool = False
     fixtures_dir: Path | None = None
+
+    #: Directory `import_nessus` may read `.nessus` files from. The agent only
+    #: supplies a bare file name; it can never point the server at another path.
+    import_dir: Path | None = None
+    max_import_bytes: int = 512 * 1024 * 1024
 
     #: Allowlist for validation targets: hostnames, IPs, or CIDR ranges.
     #: Empty means NO target may be validated (fail closed).
@@ -47,6 +53,13 @@ class Settings(BaseSettings):
     intel_cache_ttl_hours: float = 12.0
     http_timeout_seconds: float = 15.0
 
+    #: Tenable Vulnerability Management (Tenable.io / Tenable One) REST API.
+    #: Credentials are NEVER settings: they are read from TENABLE_ACCESS_KEY /
+    #: TENABLE_SECRET_KEY in the server's environment and never logged.
+    tenable_base_url: str = "https://cloud.tenable.com"
+    tenable_export_timeout_seconds: float = 300.0
+    tenable_poll_interval_seconds: float = 3.0
+
     #: Actor name recorded in the audit trail for automated decisions.
     audit_actor: str = "riskproof-agent"
 
@@ -60,6 +73,11 @@ class Settings(BaseSettings):
     @property
     def effective_fixtures_dir(self) -> Path:
         return self.fixtures_dir if self.fixtures_dir is not None else DEFAULT_FIXTURES_DIR
+
+    @property
+    def effective_import_dir(self) -> Path:
+        base = self.import_dir if self.import_dir is not None else DEFAULT_IMPORT_DIR
+        return base.expanduser()
 
     @property
     def db_path_expanded(self) -> Path:
