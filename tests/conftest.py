@@ -31,6 +31,7 @@ def settings(tmp_path: Path, import_dir: Path) -> Settings:
         offline=True,
         fixtures_dir=FIXTURES,
         import_dir=import_dir,
+        asset_inventory=tmp_path / "assets.json",  # absent: never read the real one
         allowed_targets=["127.0.0.1", "::1", "localhost"],
         approved_validation_methods=["tcp_connect", "http_banner", "tls_cert_dates"],
         dry_run=True,

@@ -22,6 +22,7 @@ Key settings (all optional, secure defaults):
 | `RISKPROOF_DB_PATH` | `~/.riskproof/riskproof.db` | SQLite storage |
 | `RISKPROOF_OFFLINE` | `false` | Force SAMPLE fixture intel |
 | `RISKPROOF_IMPORT_DIR` | `~/.riskproof/imports` | Only directory `import_nessus` reads from |
+| `RISKPROOF_ASSET_INVENTORY` | `~/.riskproof/assets.json` | Operator asset context (criticality, exposure) for real findings |
 | `RISKPROOF_MAX_IMPORT_BYTES` | `536870912` | Largest `.nessus` file accepted |
 | `RISKPROOF_TENABLE_BASE_URL` | `https://cloud.tenable.com` | Tenable VM API host (https only) |
 | `RISKPROOF_ALLOWED_TARGETS` | *(empty = deny all)* | Validation allowlist (hosts/IPs/CIDRs, comma-separated) |
@@ -106,6 +107,44 @@ download chunks) and returns the same summary. Findings are stored with
 the keys. The key pair's Tenable user needs permission to export
 vulnerabilities. Status: covered by mock-transport tests only — verify against
 a real tenant before relying on it.
+
+### Add business context (asset inventory)
+
+Scanners don't know which assets matter. Without that, imported findings
+have *unknown* exposure and business impact, and the decision-table rows
+that reach P1 through internet exposure or asset criticality never fire —
+even a KEV-listed finding on a crown-jewel server stops at P2. Record that
+context in
+`~/.riskproof/assets.json` (or the path in `RISKPROOF_ASSET_INVENTORY`):
+
+```json
+{
+  "rules": [
+    {"match": "10.20.0.0/16", "environment": "production", "internet_facing": false},
+    {"match": "10.20.99.0/24", "environment": "dmz", "internet_facing": true},
+    {"match": ["web01", "web01.corp.example"], "criticality": "critical",
+     "owner": "platform-team", "note": "customer checkout"}
+  ]
+}
+```
+
+- `match`: hostnames, FQDNs or asset ids (exact, case-insensitive), IPs, or
+  CIDR ranges. List every name your scanner reports — Nessus usually reports
+  the NetBIOS name (`web01`); RiskProof also matches the FQDN when the scan
+  includes it.
+- Fields: `criticality` (`critical`/`high`/`medium`/`low`), `environment`,
+  `internet_facing`, `owner`, plus a free-text `note`. Each rule must set at
+  least one; unknown keys are rejected so typos cannot silently drop context.
+- Each field comes from the **most specific** matching rule that sets it:
+  hostname/asset-id rules beat CIDRs, longer prefixes beat shorter ones, and
+  earlier rules win ties. Above, `web01` at `10.20.99.7` is critical, in the
+  DMZ, and internet-facing.
+- Applied whenever findings are assessed: edits take effect on the next tool
+  call, no re-import needed. Stored findings keep what the scanner reported.
+- A missing file means "no inventory". An invalid file makes investigations
+  fail with `configuration_error` until a human fixes it.
+- The inventory is operator configuration: no tool can edit it, it overrides
+  asset context carried on a finding, and it never applies to SAMPLE fixtures.
 
 ## Example session
 

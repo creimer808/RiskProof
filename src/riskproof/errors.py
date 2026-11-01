@@ -39,6 +39,15 @@ class AuthorizationDenied(RiskProofError):
     code = "authorization_denied"
 
 
+class ConfigurationError(RiskProofError):
+    """Operator-controlled configuration (e.g. the asset inventory) is invalid.
+
+    Only a human operator can fix these; the message says what and where.
+    """
+
+    code = "configuration_error"
+
+
 class ProviderUnavailable(RiskProofError):
     """An external data source could not be reached or is not configured."""
 

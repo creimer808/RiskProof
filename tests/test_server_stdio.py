@@ -39,6 +39,7 @@ def _server_params(tmp_path: Path) -> StdioServerParameters:
             "RISKPROOF_DB_PATH": str(tmp_path / "stdio-test.db"),
             "RISKPROOF_FIXTURES_DIR": str(REPO_ROOT / "fixtures"),
             "RISKPROOF_IMPORT_DIR": str(REPO_ROOT / "fixtures"),
+            "RISKPROOF_ASSET_INVENTORY": str(tmp_path / "assets.json"),  # absent
             "TENABLE_ACCESS_KEY": "",
             "TENABLE_SECRET_KEY": "",
             "PYTHONUNBUFFERED": "1",

@@ -21,6 +21,9 @@ RiskProof investigates vulnerability findings with evidence discipline:
   paths, URLs, or credentials from tool input. Imports store findings without
   enriching them: follow with investigate_finding(finding_ids=[...]).
 - Remediation actions are dry-run and approval-gated by default.
+- Asset criticality/exposure come from the operator's asset inventory
+  (RISKPROOF_ASSET_INVENTORY). When unknown, say so and point the human there;
+  never guess them.
 - When intel is degraded or fixture-backed (SAMPLE data), surface that to the user.
 """
 

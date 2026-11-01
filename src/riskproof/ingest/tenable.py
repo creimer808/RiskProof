@@ -96,6 +96,9 @@ def finding_from_tenable_vuln(record: dict[str, Any]) -> Finding:
         else _str(os_names, 256)
     )
     labels = {"tenable_asset_uuid": asset_uuid} if asset_uuid else {}
+    fqdn = _first(asset_raw.get("fqdn"))
+    if fqdn and fqdn.lower() != (hostname or "").lower():
+        labels["fqdn"] = fqdn[:256]
     asset = Asset(
         asset_id=slugify(hostname or ip or asset_key),
         hostname=hostname,

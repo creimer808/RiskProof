@@ -123,18 +123,32 @@ def _kev_evidence(cve: str, intel: ThreatIntelBundle, finding_id: str, now: date
     )
 
 
-def _asset_evidence(finding: Finding, now: datetime) -> Evidence:
+INVENTORY_HINT = (
+    "A human operator can record it in the RiskProof asset inventory (RISKPROOF_ASSET_INVENTORY)."
+)
+
+
+def _asset_evidence(
+    finding: Finding, now: datetime, inventory_rules: list[str] | None = None
+) -> Evidence:
     asset = finding.asset
     crit = criticality_value(asset)
+    if inventory_rules:
+        source = "operator-inventory"
+        provenance = f" Source: operator asset inventory (matched {', '.join(inventory_rules)})."
+        details: dict = {"inventory_rules": inventory_rules}
+    else:
+        source, provenance, details = "asset-catalog", "", {}
     if crit == "unspecified":
         return Evidence(
             id=_next_id("ev-asset", now),
             finding_id=finding.finding_id,
             kind=EvidenceKind.ASSET_CONTEXT,
-            statement="Asset context present but criticality/environment are not recorded.",
+            statement=(f"Asset criticality is not recorded.{provenance or ' ' + INVENTORY_HINT}"),
             confidence=Confidence.MISSING,
-            source="asset-catalog",
+            source=source,
             collected_at=now,
+            details=details,
         )
     if asset.internet_facing is True:
         exposure = "internet-facing"
@@ -148,11 +162,12 @@ def _asset_evidence(finding: Finding, now: datetime) -> Evidence:
         kind=EvidenceKind.ASSET_CONTEXT,
         statement=(
             f"Asset {asset.asset_id}: criticality {crit}, "
-            f"environment {asset.environment or 'unknown'}, {exposure}."
+            f"environment {asset.environment or 'unknown'}, {exposure}.{provenance}"
         ),
         confidence=Confidence.CONFIRMED,
-        source="asset-catalog",
+        source=source,
         collected_at=now,
+        details=details,
     )
 
 
@@ -166,9 +181,9 @@ def _open_questions(finding: Finding, intel: ThreatIntelBundle | None) -> list[s
             if entry is None or entry.kind != "observation":
                 questions.append(f"No EPSS observation available for {cve}.")
     if finding.asset.internet_facing is None:
-        questions.append("Internet exposure of the asset is unknown.")
+        questions.append(f"Internet exposure of the asset is unknown. {INVENTORY_HINT}")
     if criticality_value(finding.asset) == "unspecified":
-        questions.append("Asset criticality is not recorded.")
+        questions.append(f"Asset criticality is not recorded. {INVENTORY_HINT}")
     if not finding.plugin_output:
         questions.append("No plugin output captured to verify the affected version.")
     return questions
@@ -191,9 +206,15 @@ def _initial_applicability(finding: Finding) -> tuple[ApplicabilityStatus, list[
 
 
 def build_investigation_record(
-    finding: Finding, intel: ThreatIntelBundle | None = None
+    finding: Finding,
+    intel: ThreatIntelBundle | None = None,
+    inventory_rules: list[str] | None = None,
 ) -> InvestigationRecord:
-    """Create the initial evidence file for a finding (with optional intel)."""
+    """Create the initial evidence file for a finding (with optional intel).
+
+    ``inventory_rules`` names the operator asset-inventory rules that supplied
+    the finding's asset context, so the evidence cites them.
+    """
     record = make_record(finding.finding_id)
     now = record.created_at
     record.evidence.append(_scanner_evidence(finding, now))
@@ -202,7 +223,7 @@ def build_investigation_record(
         for cve in finding.cve_ids:
             record.evidence.append(_epss_evidence(cve, intel, finding.finding_id, now))
             record.evidence.append(_kev_evidence(cve, intel, finding.finding_id, now))
-    record.evidence.append(_asset_evidence(finding, now))
+    record.evidence.append(_asset_evidence(finding, now, inventory_rules))
 
     record.open_questions = _open_questions(finding, intel)
     record.applicability, record.applicability_rationale = _initial_applicability(finding)

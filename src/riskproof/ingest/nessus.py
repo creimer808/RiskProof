@@ -8,6 +8,7 @@ traceability only — they never drive behavior.
 
 from __future__ import annotations
 
+import ipaddress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -51,13 +52,28 @@ def _build_asset(host_name: str, tags: dict[str, str]) -> Asset:
         or tags.get("host-fqdn")
         or (host_name if host_name != ip else None)
     )
+    labels = {k: v for k, v in tags.items() if k.startswith("CPE")}
+    # Nessus prefers the NetBIOS name for `hostname`; keep the FQDN too (from the
+    # host-fqdn tag, else a non-IP ReportHost name) so asset inventory rules
+    # written with either name still match.
+    fqdn = tags.get("host-fqdn") or (None if _is_ip(host_name) else host_name)
+    if fqdn and fqdn.lower() != (hostname or "").lower():
+        labels["fqdn"] = fqdn
     return Asset(
         asset_id=_slug(hostname or ip or host_name),
         hostname=hostname,
         ip_address=ip,
         operating_system=tags.get("operating-system"),
-        labels={k: v for k, v in tags.items() if k.startswith("CPE")},
+        labels=labels,
     )
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _parse_report_item(item: Any, host_name: str, tags: dict[str, str]) -> Finding:

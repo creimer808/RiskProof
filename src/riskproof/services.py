@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from riskproof.config import Settings
+from riskproof.ingest.inventory import AssetInventorySource
 from riskproof.providers.epss import EPSSProvider
 from riskproof.providers.fixtures_source import FixtureIntelSource
 from riskproof.providers.kev import KEVProvider
@@ -32,6 +33,7 @@ class Services:
     kev: KEVProvider
     fixture_intel: FixtureIntelSource
     tenable: TenableBridge
+    asset_inventory: AssetInventorySource
 
 
 def build_services(settings: Settings) -> Services:
@@ -53,4 +55,5 @@ def build_services(settings: Settings) -> Services:
         ),
         fixture_intel=FixtureIntelSource(settings.effective_fixtures_dir),
         tenable=TenableBridge(settings.tenable_base_url),
+        asset_inventory=AssetInventorySource(settings.effective_asset_inventory),
     )

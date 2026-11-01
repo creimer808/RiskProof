@@ -41,6 +41,11 @@ we know, and what should we do about it?*
 7. **Dry-run is the default.** `execute_risk_policy` records actions for human
    approval. Milestone 0 does not contact ticketing systems. Tell the user what
    was recorded and where (the audit log) rather than implying actions executed.
+8. **Never invent asset context.** Criticality and internet exposure come from
+   the operator's asset inventory. If an assessment says they are unknown, say
+   so, note that this can hold real P1s at P2, and tell the user a human can
+   record them in the inventory file (`RISKPROOF_ASSET_INVENTORY`). Do not
+   re-submit the finding inline with guessed context.
 
 ## Investigation workflow
 

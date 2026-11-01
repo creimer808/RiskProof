@@ -241,11 +241,14 @@ async def investigate(
 
     reports: list[InvestigationReport] = []
     for f in findings:
+        # Store the finding as reported; operator asset context is applied at
+        # assessment time so inventory edits take effect without re-importing.
         services.findings.save(f)
+        f, inventory_rules = with_asset_context(services, f)
         prior = services.investigations.find(f.finding_id)
         # Re-investigating without fresh intel keeps the intel already on file.
         record_intel = intel if intel is not None or prior is None else prior.intel
-        record = build_investigation_record(f, record_intel)
+        record = build_investigation_record(f, record_intel, inventory_rules)
         if prior is not None:
             record = carry_forward(prior, record)
         services.investigations.save(record)
@@ -330,10 +333,18 @@ async def validate_exposure(
     return result
 
 
+def with_asset_context(services: Services, finding: Finding) -> tuple[Finding, list[str]]:
+    """Apply the operator asset inventory (if any) to a finding."""
+    inventory = services.asset_inventory.current()
+    if inventory is None:
+        return finding, []
+    return inventory.apply(finding)
+
+
 def recompute_assessment(
     services: Services, finding_id: str
 ) -> tuple[Finding, InvestigationRecord, RiskAssessment]:
-    finding = services.findings.get(finding_id)
+    finding, _ = with_asset_context(services, services.findings.get(finding_id))
     record = services.investigations.get(finding_id)
     return finding, record, assess(finding, record)
 

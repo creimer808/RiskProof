@@ -35,6 +35,11 @@ The language model is treated as an untrusted component:
 - **Priority cannot be negotiated.** `assess()` and `evaluate_policy()` are pure
   functions over stored evidence. Tool input selects *what* to evaluate, never
   *what the result is*.
+- **Asset context is operator-owned.** Criticality and internet exposure drive
+  priority, so they come from the operator's asset inventory
+  (`RISKPROOF_ASSET_INVENTORY`), which no tool can modify and which overrides
+  any asset context carried on a finding. Invalid inventories fail loudly
+  rather than being ignored.
 
 ## Non-destructive validation contract
 
