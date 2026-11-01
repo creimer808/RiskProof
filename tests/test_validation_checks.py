@@ -7,13 +7,13 @@ import contextlib
 
 import pytest
 
-from riskproof.errors import AuthorizationDenied
+from riskproof.errors import AuthorizationDenied, InvalidInputError
 from riskproof.validation.checks import (
     CHECK_METHODS,
     run_authorized_check,
     run_check,
 )
-from riskproof.validation.targets import TargetAuthorizer
+from riskproof.validation.targets import AuthorizedTarget, TargetAuthorizer
 
 
 @pytest.fixture()
@@ -100,3 +100,28 @@ async def test_pipeline_refuses_unlisted_target():
 def test_check_registry_is_locked_down():
     """The registry must only contain the three non-destructive methods."""
     assert set(CHECK_METHODS) == {"tcp_connect", "http_banner", "tls_cert_dates"}
+
+
+async def test_check_connects_to_pinned_ip_not_the_name(local_server):
+    """DNS rebinding guard: the check must use the IP pinned at authorization.
+
+    The requested name does not resolve at all, so the check can only succeed
+    if it connects to ``connect_ip`` instead of re-resolving the name.
+    """
+    _, port = local_server
+    target = AuthorizedTarget(
+        requested="rebind.invalid",
+        resolved_ips=["127.0.0.1"],
+        matched_rule="127.0.0.1",
+        connect_ip="127.0.0.1",
+    )
+    result = await run_check("http_banner", target, port, timeout=3.0)
+    assert result.status == "verified"
+    assert result.target == "rebind.invalid"
+    assert result.observed["connected_ip"] == "127.0.0.1"
+
+
+async def test_out_of_range_port_rejected():
+    target = TargetAuthorizer(["127.0.0.1"]).authorize("127.0.0.1")
+    with pytest.raises(InvalidInputError):
+        await run_check("tcp_connect", target, 0)

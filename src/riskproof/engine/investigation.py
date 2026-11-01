@@ -18,7 +18,12 @@ from riskproof.engine.evidence import (
     build_validation_evidence,
 )
 from riskproof.engine.risk import RiskAssessment, assess
-from riskproof.errors import InvalidInputError, NotFoundError, ProviderUnavailable
+from riskproof.errors import (
+    AuthorizationDenied,
+    InvalidInputError,
+    NotFoundError,
+    ProviderUnavailable,
+)
 from riskproof.ingest.fixtures import (
     attach_asset_context,
     load_assets_fixture,
@@ -275,14 +280,26 @@ async def validate_exposure(
     from riskproof.validation.targets import TargetAuthorizer
 
     authorizer = TargetAuthorizer(services.settings.allowed_targets)
-    result = await run_authorized_check(
-        method=method,
-        host=host,
-        port=port,
-        authorizer=authorizer,
-        approved_methods=services.settings.approved_validation_methods,
-        timeout=timeout,
-    )
+    try:
+        result = await run_authorized_check(
+            method=method,
+            host=host,
+            port=port,
+            authorizer=authorizer,
+            approved_methods=services.settings.approved_validation_methods,
+            timeout=timeout,
+        )
+    except AuthorizationDenied as exc:
+        # Refusals are security-relevant: record them before reporting back.
+        services.audit.append(
+            actor=services.settings.audit_actor,
+            action=f"validate_exposure:{method}",
+            subject=f"{host}:{port}",
+            outcome="refused",
+            rationale=exc.message,
+            details={"finding_id": finding_id},
+        )
+        raise
     result.audit_id = services.audit.append(
         actor=services.settings.audit_actor,
         action=f"validate_exposure:{method}",

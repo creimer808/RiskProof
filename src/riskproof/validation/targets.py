@@ -4,10 +4,17 @@ Security model (fail closed):
 
 * Only targets on the server-side allowlist (Settings.allowed_targets) may be
   validated. The allowlist CANNOT be modified through MCP tool input.
-* Hostnames are resolved and EVERY resolved address must be allowed — this
-  blocks an agent from dressing up an internal IP as an external hostname.
+* Allowlist entries are IPs, CIDR ranges, or exact hostnames (case-insensitive,
+  no wildcards). A hostname rule authorizes that name and whatever it resolves
+  to at authorization time — the operator vouched for the name.
+* Any other hostname is resolved and EVERY resolved address must fall inside an
+  IP/CIDR rule — this blocks an agent from dressing up an internal IP as an
+  external hostname.
+* The authorized address is pinned (``AuthorizedTarget.connect_ip``): checks
+  connect to that IP rather than re-resolving the name, so DNS cannot change
+  the destination between authorization and connection (DNS rebinding).
 * Unresolvable hosts are refused.
-* Attempts are recorded in the audit trail (denials included).
+* Attempts are recorded in the audit trail (denials included) by the caller.
 """
 
 from __future__ import annotations
@@ -26,6 +33,8 @@ class AuthorizedTarget(BaseModel):
     requested: str
     resolved_ips: list[str]
     matched_rule: str
+    #: The address checks must connect to. Pinned at authorization time.
+    connect_ip: str
 
 
 class TargetAuthorizer:
@@ -41,7 +50,7 @@ class TargetAuthorizer:
             try:
                 self._networks.append((ipaddress.ip_network(entry, strict=False), entry))
             except ValueError:
-                self._hosts[entry.lower()] = entry
+                self._hosts[entry.lower().rstrip(".")] = entry
 
     def _ip_allowed(self, ip: str) -> str | None:
         try:
@@ -54,13 +63,19 @@ class TargetAuthorizer:
         return None
 
     def _resolve(self, host: str) -> list[str]:
+        """Resolved addresses in resolver preference order, de-duplicated."""
         try:
-            infos = socket.getaddrinfo(host, None)
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
             raise AuthorizationDenied(
                 f"Target {host!r} could not be resolved; refusing to proceed (fail closed)."
             ) from exc
-        return sorted({info[4][0] for info in infos})
+        resolved = list(dict.fromkeys(str(info[4][0]) for info in infos))
+        if not resolved:
+            raise AuthorizationDenied(
+                f"Target {host!r} resolved to no addresses; refusing to proceed (fail closed)."
+            )
+        return resolved
 
     def authorize(self, host: str) -> AuthorizedTarget:
         """Return an AuthorizedTarget or raise AuthorizationDenied."""
@@ -72,7 +87,10 @@ class TargetAuthorizer:
             rule = self._ip_allowed(ipaddress_value)
             if rule:
                 return AuthorizedTarget(
-                    requested=host, resolved_ips=[ipaddress_value], matched_rule=rule
+                    requested=host,
+                    resolved_ips=[ipaddress_value],
+                    matched_rule=rule,
+                    connect_ip=ipaddress_value,
                 )
             raise AuthorizationDenied(
                 f"Target {host!r} is not on the RiskProof validation allowlist. "
@@ -80,14 +98,30 @@ class TargetAuthorizer:
             )
 
         resolved = self._resolve(host)
-        for ip in resolved:
-            rule = self._ip_allowed(ip)
-            if rule:
-                return AuthorizedTarget(requested=host, resolved_ips=resolved, matched_rule=rule)
-        raise AuthorizationDenied(
-            f"Target {host!r} resolves to {resolved}, none of which are on the "
-            "RiskProof validation allowlist. Ask a human operator to authorize "
-            "this target via RISKPROOF_ALLOWED_TARGETS."
+
+        host_rule = self._hosts.get(host.lower())
+        if host_rule is not None:
+            return AuthorizedTarget(
+                requested=host,
+                resolved_ips=resolved,
+                matched_rule=host_rule,
+                connect_ip=resolved[0],
+            )
+
+        rules = [self._ip_allowed(ip) for ip in resolved]
+        disallowed = [ip for ip, rule in zip(resolved, rules, strict=True) if rule is None]
+        if disallowed:
+            raise AuthorizationDenied(
+                f"Target {host!r} resolves to {resolved}; {disallowed} "
+                f"{'is' if len(disallowed) == 1 else 'are'} not on the RiskProof validation "
+                "allowlist (every resolved address must be allowed). Ask a human operator to "
+                "authorize this target via RISKPROOF_ALLOWED_TARGETS."
+            )
+        return AuthorizedTarget(
+            requested=host,
+            resolved_ips=resolved,
+            matched_rule=str(rules[0]),
+            connect_ip=resolved[0],
         )
 
     @staticmethod

@@ -56,3 +56,54 @@ def test_ipv6_allowlisted():
     auth = TargetAuthorizer(["::1"])
     target = auth.authorize("::1")
     assert target.resolved_ips == ["::1"]
+
+
+def _stub_resolver(auth: TargetAuthorizer, answers: dict[str, list[str]]) -> TargetAuthorizer:
+    """Deterministic DNS: no network, no dependence on the host's resolver."""
+
+    def resolve(host: str) -> list[str]:
+        if host.lower() not in answers:  # DNS names are case-insensitive
+            raise AuthorizationDenied(f"Target {host!r} could not be resolved")
+        return answers[host.lower()]
+
+    auth._resolve = resolve  # type: ignore[method-assign]
+    return auth
+
+
+def test_hostname_rule_authorizes_that_name():
+    auth = _stub_resolver(TargetAuthorizer(["app.internal"]), {"app.internal": ["10.1.2.3"]})
+    target = auth.authorize("APP.internal.")  # case-insensitive, trailing dot ignored
+    assert target.matched_rule == "app.internal"
+    assert target.connect_ip == "10.1.2.3"
+
+
+def test_hostname_rule_does_not_cover_other_names():
+    auth = _stub_resolver(
+        TargetAuthorizer(["app.internal"]),
+        {"app.internal": ["10.1.2.3"], "db.internal": ["10.1.2.3"]},
+    )
+    with pytest.raises(AuthorizationDenied):
+        auth.authorize("db.internal")
+
+
+def test_hostname_must_have_every_resolved_address_allowed():
+    """One allowed address must not smuggle in a disallowed one."""
+    auth = _stub_resolver(
+        TargetAuthorizer(["127.0.0.1/32"]), {"evil.example": ["127.0.0.1", "10.9.9.9"]}
+    )
+    with pytest.raises(AuthorizationDenied, match=r"10\.9\.9\.9"):
+        auth.authorize("evil.example")
+
+
+def test_hostname_with_all_addresses_allowed_pins_first_address():
+    auth = _stub_resolver(
+        TargetAuthorizer(["10.0.0.0/24"]), {"web.example": ["10.0.0.7", "10.0.0.8"]}
+    )
+    target = auth.authorize("web.example")
+    assert target.resolved_ips == ["10.0.0.7", "10.0.0.8"]
+    assert target.connect_ip == "10.0.0.7"
+
+
+def test_ip_target_pins_itself():
+    target = TargetAuthorizer(["10.20.0.0/24"]).authorize("10.20.0.55")
+    assert target.connect_ip == "10.20.0.55"

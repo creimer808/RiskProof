@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from riskproof.errors import AuthorizationDenied
+from riskproof.errors import AuthorizationDenied, InvalidInputError
 from riskproof.validation.targets import AuthorizedTarget, TargetAuthorizer
 
 CHECK_METHODS = ("tcp_connect", "http_banner", "tls_cert_dates")
@@ -65,10 +65,10 @@ class ValidationResult(BaseModel):
         )
 
 
-async def _tcp_connect(host: str, port: int, timeout: float) -> tuple[dict, list[str]]:
+async def _tcp_connect(ip: str, port: int, timeout: float) -> tuple[dict, list[str]]:
     start = time.monotonic()
     try:
-        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
     except (ConnectionRefusedError, OSError):
         return {}, ["connection refused or unreachable"]
     except TimeoutError:
@@ -80,15 +80,15 @@ async def _tcp_connect(host: str, port: int, timeout: float) -> tuple[dict, list
     return {"connect_seconds": elapsed, "tcp_reachable": True}, []
 
 
-async def _http_banner(host: str, port: int, timeout: float) -> tuple[dict, list[str]]:
+async def _http_banner(
+    ip: str, port: int, timeout: float, host_header: str
+) -> tuple[dict, list[str]]:
     request = (
-        f"HEAD / HTTP/1.0\r\nHost: {host}\r\nUser-Agent: RiskProof-validation\r\n"
+        f"HEAD / HTTP/1.0\r\nHost: {host_header}\r\nUser-Agent: RiskProof-validation\r\n"
         f"Connection: close\r\n\r\n"
     )
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout
-        )
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
     except (ConnectionRefusedError, OSError):
         return {}, ["connection refused or unreachable"]
     except TimeoutError:
@@ -184,7 +184,9 @@ def _validity_from_der(der: bytes) -> dict[str, str]:
     raise ValueError("Validity sequence not found")
 
 
-async def _tls_cert_dates(host: str, port: int, timeout: float) -> tuple[dict, list[str]]:
+async def _tls_cert_dates(
+    ip: str, port: int, timeout: float, server_name: str
+) -> tuple[dict, list[str]]:
     loop = asyncio.get_running_loop()
 
     def _sync_observe() -> dict[str, Any]:
@@ -192,8 +194,8 @@ async def _tls_cert_dates(host: str, port: int, timeout: float) -> tuple[dict, l
         ctx.check_hostname = False  # observing, not trusting
         ctx.verify_mode = ssl.CERT_NONE
         with (
-            socket.create_connection((host, port), timeout=timeout) as sock,
-            ctx.wrap_socket(sock, server_hostname=host) as tls,
+            socket.create_connection((ip, port), timeout=timeout) as sock,
+            ctx.wrap_socket(sock, server_hostname=server_name) as tls,
         ):
             der = tls.getpeercert(binary_form=True)
             observed: dict[str, Any] = {"tls_version": tls.version()}
@@ -219,15 +221,21 @@ async def run_check(
             f"Validation method {method!r} does not exist. Approved methods: "
             f"{', '.join(CHECK_METHODS)}."
         )
-    # Connect to the requested name (it was resolved during authorization).
-    host = target.requested
+    if not 1 <= port <= 65535:
+        raise InvalidInputError(f"port must be between 1 and 65535, got {port}.")
+    # Connect to the address pinned during authorization — never re-resolve the
+    # name, or DNS could redirect the check to an unauthorized host. The name is
+    # used only for the HTTP Host header and TLS SNI.
+    ip, name = target.connect_ip, target.requested
     now = datetime.now(UTC)
     if method == "tcp_connect":
-        observed, notes = await _tcp_connect(host, port, timeout)
+        observed, notes = await _tcp_connect(ip, port, timeout)
     elif method == "http_banner":
-        observed, notes = await _http_banner(host, port, timeout)
+        observed, notes = await _http_banner(ip, port, timeout, host_header=name)
     else:
-        observed, notes = await _tls_cert_dates(host, port, timeout)
+        observed, notes = await _tls_cert_dates(ip, port, timeout, server_name=name)
+    if ip != name:
+        observed = {"connected_ip": ip, **observed}
     status: Literal["verified", "inconclusive"] = "verified" if not notes else "inconclusive"
     return ValidationResult(
         method=method,  # type: ignore[arg-type]

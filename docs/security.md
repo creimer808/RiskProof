@@ -23,8 +23,12 @@ The language model is treated as an untrusted component:
 - **Target authorization is structural.** `TargetAuthorizer` resolves hostnames
   and requires *every* resolved address to match the allowlist (IP, CIDR, or
   hostname rule) — blocking hostname-dressing of internal addresses — and fails
-  closed on resolution failure. Denied attempts are recorded in the audit log
-  with the human steps required to authorize properly.
+  closed on resolution failure. A hostname rule is an exact, case-insensitive
+  name match (no wildcards). The authorized address is pinned: checks connect to
+  that IP and never re-resolve the name, so DNS rebinding cannot redirect a check
+  after authorization. Denied attempts (unlisted targets and unapproved methods)
+  are recorded in the audit log with outcome `refused` and the human steps
+  required to authorize properly.
 - **Method authorization is a registry.** `CHECK_METHODS` is a closed set of
   three non-destructive checks. Unknown methods raise `AuthorizationDenied`
   before any network activity. Nothing can inject new methods at runtime.
