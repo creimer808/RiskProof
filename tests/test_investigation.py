@@ -83,3 +83,40 @@ async def test_enrich_live_source_without_network_reports_unavailable(services):
     assert bundle.epss["CVE-2021-44228"].kind == "unavailable"
     assert bundle.degraded is True
     assert bundle.epss_source == "unavailable"
+
+
+LOG4SHELL = "prod-web-01.demo.local-155999-8080tcp"
+
+
+async def test_reinvestigation_preserves_validation_and_verified_applicability(services):
+    """Re-running investigate_finding must not erase work done after the first run."""
+    from riskproof.models.evidence import ApplicabilityStatus, EvidenceKind
+    from riskproof.models.findings import ServiceObservation
+
+    await inv.investigate(services, fixture="findings_sample.json")
+    created_at = services.investigations.get(LOG4SHELL).created_at
+    await inv.validate_exposure(
+        services, host="127.0.0.1", port=9, method="tcp_connect", finding_id=LOG4SHELL
+    )
+    inv.verify_applicability(services, LOG4SHELL, ServiceObservation(port=8080, version="2.15.0"))
+
+    report = (await inv.investigate(services, finding_id=LOG4SHELL))[0]
+    record = report.record
+    kinds = [e.kind for e in record.evidence]
+    assert kinds.count(EvidenceKind.NETWORK_VALIDATION) == 1
+    assert kinds.count(EvidenceKind.SCANNER_FINDING) == 1  # regenerated, not duplicated
+    assert record.applicability == ApplicabilityStatus.SUSPECTED_NOT_AFFECTED
+    assert record.created_at == created_at
+    assert report.assessment.applicability == ApplicabilityStatus.SUSPECTED_NOT_AFFECTED
+    # The verdict is marked as carried forward exactly once, however often we re-run.
+    await inv.investigate(services, finding_id=LOG4SHELL)
+    rationale = services.investigations.get(LOG4SHELL).applicability_rationale
+    assert sum("carried forward" in line for line in rationale) == 1
+
+
+async def test_reinvestigation_without_intel_keeps_existing_intel(services):
+    await inv.investigate(services, fixture="findings_sample.json")
+    report = (await inv.investigate(services, finding_id=LOG4SHELL, include_intel=False))[0]
+    assert report.record.intel is not None
+    assert report.assessment.recommended_priority is not None
+    assert report.assessment.recommended_priority.value == "P1"

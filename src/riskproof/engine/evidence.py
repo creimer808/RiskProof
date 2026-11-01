@@ -211,6 +211,46 @@ def build_investigation_record(
     return record
 
 
+#: Evidence kinds rebuilt from the finding + intel on every investigation. All
+#: other kinds (validation results, config observations, ...) were gathered by
+#: later steps and must survive a re-investigation.
+REGENERATED_EVIDENCE_KINDS = frozenset(
+    {EvidenceKind.SCANNER_FINDING, EvidenceKind.THREAT_INTEL, EvidenceKind.ASSET_CONTEXT}
+)
+
+#: Applicability outcomes that only a verification step can produce; the
+#: scanner-only baseline must never overwrite them.
+VERIFIED_APPLICABILITY = frozenset(
+    {
+        ApplicabilityStatus.AFFECTED_EVIDENCED,
+        ApplicabilityStatus.SUSPECTED_NOT_AFFECTED,
+        ApplicabilityStatus.VERIFICATION_FAILED,
+    }
+)
+
+CARRIED_FORWARD_NOTE = (
+    "Applicability verdict carried forward from an earlier verification; re-run "
+    "verify_applicability if the scanner evidence has changed."
+)
+
+
+def carry_forward(prior: InvestigationRecord, fresh: InvestigationRecord) -> InvestigationRecord:
+    """Merge a re-investigation into the existing record without losing work.
+
+    ``fresh`` supplies regenerated scanner/intel/asset evidence; ``prior``
+    supplies everything gathered after the first investigation (validation
+    evidence, verified applicability) and the original creation time.
+    """
+    fresh.created_at = prior.created_at
+    fresh.evidence.extend(e for e in prior.evidence if e.kind not in REGENERATED_EVIDENCE_KINDS)
+    if prior.applicability in VERIFIED_APPLICABILITY:
+        fresh.applicability = prior.applicability
+        fresh.applicability_rationale = list(prior.applicability_rationale)
+        if CARRIED_FORWARD_NOTE not in fresh.applicability_rationale:
+            fresh.applicability_rationale.append(CARRIED_FORWARD_NOTE)
+    return fresh
+
+
 def build_validation_evidence(result: ValidationResult, finding_id: str) -> Evidence:
     """Map a validation result to evidence with honest confidence."""
     confidence = Confidence.CONFIRMED if result.status == "verified" else Confidence.INCONCLUSIVE

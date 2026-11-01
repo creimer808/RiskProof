@@ -28,7 +28,10 @@ def _actions_for(
     priority: Priority | None, applicability: ApplicabilityStatus
 ) -> list[PolicyAction]:
     actions = list(_PRIORITY_ACTIONS.get(priority, [PolicyAction.NO_ACTION]))
-    if applicability == ApplicabilityStatus.SUSPECTED_NOT_AFFECTED:
+    if (
+        applicability == ApplicabilityStatus.SUSPECTED_NOT_AFFECTED
+        and PolicyAction.ESCALATE_TO_OWNER not in actions
+    ):
         actions.append(PolicyAction.ESCALATE_TO_OWNER)
     if actions != [PolicyAction.NO_ACTION]:
         actions = [a for a in actions if a != PolicyAction.NO_ACTION]
@@ -51,7 +54,9 @@ def evaluate_policy(
     approved: list[PolicyAction] = []
     requires_approval: list[PolicyAction] = []
     recorded_ids: list[str] = []
+    existing_ids: list[str] = []
 
+    priority_label = priority.value if priority else None
     for action in recommended:
         if action == PolicyAction.NO_ACTION:
             continue
@@ -60,44 +65,50 @@ def evaluate_policy(
         )
         if needs_approval:
             requires_approval.append(action)
-            action_id = pending.add(
-                finding_id=finding.finding_id,
-                action=action.value,
-                status="pending_approval",
-                payload={
-                    "priority": priority.value if priority else None,
-                    "policy": policy.name,
-                    "dry_run": settings.dry_run,
-                },
-            )
-            recorded_ids.append(str(action_id))
-            audit.append(
-                actor=settings.audit_actor,
-                action=f"policy:{action.value}",
-                subject=finding.finding_id,
-                outcome="pending_human_approval",
-                rationale=(
-                    f"Priority {priority.value if priority else 'n/a'} under policy {policy.name}."
-                ),
-                details={"dry_run": settings.dry_run},
-            )
+            status = "pending_approval"
+            payload = {
+                "priority": priority_label,
+                "policy": policy.name,
+                "dry_run": settings.dry_run,
+            }
+            outcome = "pending_human_approval"
+            reason = f"Priority {priority_label or 'n/a'} under policy {policy.name}."
         else:
             approved.append(action)
-            action_id = pending.add(
-                finding_id=finding.finding_id,
-                action=action.value,
-                status="queued_dry_run" if settings.dry_run else "queued",
-                payload={"priority": priority.value if priority else None},
-            )
-            recorded_ids.append(str(action_id))
+            status = "queued_dry_run" if settings.dry_run else "queued"
+            payload = {"priority": priority_label}
+            outcome = "dry_run_recorded" if settings.dry_run else "queued"
+            reason = f"Policy {policy.name} permits this action without approval."
+
+        # Idempotent: re-evaluating a finding reuses an identical outstanding
+        # action rather than queueing a duplicate. The re-evaluation itself is
+        # still audited so the decision chain stays complete.
+        existing_id = pending.find_open(finding.finding_id, action.value, status)
+        if existing_id is not None:
+            recorded_ids.append(str(existing_id))
+            existing_ids.append(str(existing_id))
             audit.append(
                 actor=settings.audit_actor,
                 action=f"policy:{action.value}",
                 subject=finding.finding_id,
-                outcome=("dry_run_recorded" if settings.dry_run else "queued"),
-                rationale=f"Policy {policy.name} permits this action without approval.",
-                details={"dry_run": settings.dry_run},
+                outcome="already_recorded",
+                rationale=f"{reason} Reusing outstanding action {existing_id} ({status}).",
+                details={"dry_run": settings.dry_run, "existing_action_id": existing_id},
             )
+            continue
+
+        action_id = pending.add(
+            finding_id=finding.finding_id, action=action.value, status=status, payload=payload
+        )
+        recorded_ids.append(str(action_id))
+        audit.append(
+            actor=settings.audit_actor,
+            action=f"policy:{action.value}",
+            subject=finding.finding_id,
+            outcome=outcome,
+            rationale=reason,
+            details={"dry_run": settings.dry_run},
+        )
 
     rationale = list(assessment.priority_rationale)
     if assessment.applicability == ApplicabilityStatus.SUSPECTED_NOT_AFFECTED:
@@ -119,4 +130,5 @@ def evaluate_policy(
         dry_run=settings.dry_run,
         applicability=assessment.applicability,
         recorded_action_ids=recorded_ids,
+        existing_action_ids=existing_ids,
     )

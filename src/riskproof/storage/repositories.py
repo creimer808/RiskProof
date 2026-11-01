@@ -89,13 +89,20 @@ class InvestigationRepository:
         )
 
     def get(self, finding_id: str) -> InvestigationRecord:
+        record = self.find(finding_id)
+        if record is None:
+            raise NotFoundError(
+                f"No investigation record exists for {finding_id!r}. Run investigate_finding first."
+            )
+        return record
+
+    def find(self, finding_id: str) -> InvestigationRecord | None:
+        """The stored record, or None if the finding was never investigated."""
         row = self._db.query_one(
             "SELECT payload FROM investigations WHERE finding_id = ?", (finding_id,)
         )
         if row is None:
-            raise NotFoundError(
-                f"No investigation record exists for {finding_id!r}. Run investigate_finding first."
-            )
+            return None
         return InvestigationRecord.model_validate_json(row["payload"])
 
 
@@ -183,6 +190,19 @@ class PendingActionRepository:
             (iso(utcnow()), finding_id, action, status, json.dumps(payload)),
         )
         return int(cur.lastrowid or 0)
+
+    def find_open(self, finding_id: str, action: str, status: str) -> int | None:
+        """Id of an existing action with this exact finding/action/status, if any.
+
+        Lets repeated policy runs reuse an outstanding action instead of
+        recording a duplicate.
+        """
+        row = self._db.query_one(
+            "SELECT id FROM pending_actions WHERE finding_id = ? AND action = ? AND status = ? "
+            "ORDER BY id LIMIT 1",
+            (finding_id, action, status),
+        )
+        return int(row["id"]) if row is not None else None
 
     def list_open(self, finding_id: str | None = None, limit: int = 100) -> list[dict]:
         if finding_id is None:

@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from riskproof.engine import importer, policy_engine, remediation, scenario
+from riskproof.engine import importer, remediation, scenario
 from riskproof.engine import investigation as inv
 from riskproof.errors import RiskProofError, error_payload
 from riskproof.models.findings import Finding, ServiceObservation
@@ -277,28 +277,20 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         are recorded in the audit trail; by default they run dry-run and require
         human approval — ticketing integrations are not active in milestone 0.
 
+        Safe to re-run: an identical outstanding action is reused (listed in
+        `existing_action_ids`), not recorded twice. All-or-nothing: if any id
+        has no investigation record, nothing is recorded and the error lists
+        every missing id.
+
         Args:
             finding_ids: findings previously processed by investigate_finding.
             policy_name: policy to apply (only the default policy exists in M0).
         """
         try:
-            policy = RiskPolicy(name=policy_name)
-            decisions = []
-            for fid in finding_ids:
-                finding, record, assessment = inv.recompute_assessment(services, fid)
-                decision = policy_engine.evaluate_policy(
-                    finding,
-                    record,
-                    assessment,
-                    policy,
-                    services.settings,
-                    services.audit,
-                    services.pending,
-                )
-                decisions.append(decision.model_dump(mode="json"))
+            decisions = inv.execute_risk_policy(services, finding_ids, RiskPolicy(name=policy_name))
             return {
                 "ok": True,
-                "decisions": decisions,
+                "decisions": [d.model_dump(mode="json") for d in decisions],
                 "dry_run": services.settings.dry_run,
                 "note": (
                     "Milestone 0 records actions for human execution; no external "

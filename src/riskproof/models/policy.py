@@ -57,3 +57,6 @@ class PolicyDecision(BaseModel):
     dry_run: bool = True
     applicability: ApplicabilityStatus = ApplicabilityStatus.UNKNOWN
     recorded_action_ids: list[str] = Field(default_factory=list)
+    #: Subset of recorded_action_ids that already existed from an earlier
+    #: evaluation and were reused instead of being recorded again.
+    existing_action_ids: list[str] = Field(default_factory=list)

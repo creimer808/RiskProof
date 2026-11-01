@@ -12,10 +12,12 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from riskproof.engine import policy_engine
 from riskproof.engine.evidence import (
     apply_applicability_observation,
     build_investigation_record,
     build_validation_evidence,
+    carry_forward,
 )
 from riskproof.engine.risk import RiskAssessment, assess
 from riskproof.errors import (
@@ -37,6 +39,7 @@ from riskproof.models.intel import (
     KEVStatus,
     ThreatIntelBundle,
 )
+from riskproof.models.policy import PolicyDecision, RiskPolicy
 from riskproof.providers.base import ProviderError
 from riskproof.providers.fixtures_source import SAMPLE_NOTICE
 from riskproof.services import Services
@@ -239,7 +242,12 @@ async def investigate(
     reports: list[InvestigationReport] = []
     for f in findings:
         services.findings.save(f)
-        record = build_investigation_record(f, intel)
+        prior = services.investigations.find(f.finding_id)
+        # Re-investigating without fresh intel keeps the intel already on file.
+        record_intel = intel if intel is not None or prior is None else prior.intel
+        record = build_investigation_record(f, record_intel)
+        if prior is not None:
+            record = carry_forward(prior, record)
         services.investigations.save(record)
         reports.append(
             InvestigationReport(
@@ -328,6 +336,41 @@ def recompute_assessment(
     finding = services.findings.get(finding_id)
     record = services.investigations.get(finding_id)
     return finding, record, assess(finding, record)
+
+
+def execute_risk_policy(
+    services: Services, finding_ids: list[str], policy: RiskPolicy
+) -> list[PolicyDecision]:
+    """Evaluate policy for a batch of findings — all or nothing.
+
+    Every finding is loaded and assessed BEFORE any action or audit entry is
+    written, so an unknown id cannot leave a half-recorded batch behind.
+    """
+    unique_ids = list(dict.fromkeys(finding_ids))
+    loaded: list[tuple[Finding, InvestigationRecord, RiskAssessment]] = []
+    missing: list[str] = []
+    for fid in unique_ids:
+        try:
+            loaded.append(recompute_assessment(services, fid))
+        except NotFoundError:
+            missing.append(fid)
+    if missing:
+        raise NotFoundError(
+            f"No investigation record for {missing}; nothing was recorded. Run "
+            "investigate_finding on them first, or retry without them."
+        )
+    return [
+        policy_engine.evaluate_policy(
+            finding,
+            record,
+            assessment,
+            policy,
+            services.settings,
+            services.audit,
+            services.pending,
+        )
+        for finding, record, assessment in loaded
+    ]
 
 
 def confidence_summary(record: InvestigationRecord) -> dict[str, int]:
