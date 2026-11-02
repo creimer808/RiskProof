@@ -90,7 +90,7 @@ nudge a P1 down to a P3.
 | Decide | `simulate_remediation` | Compare fix / restrict / verify options and expected effects |
 | Decide | `execute_risk_policy` | P1–P4 decision table → recorded, approval-gated actions (dry-run default) |
 | Review | `get_audit_trail` | Per-finding or recent history plus pending actions |
-| Review | `generate_report` | Self-contained HTML report (rollup, queue, evidence, audit) written 0600 |
+| Review | `generate_report` | Self-contained HTML report (rollup, queue, compact finding cards, audit) written 0600 |
 
 ---
 

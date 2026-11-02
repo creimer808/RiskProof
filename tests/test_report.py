@@ -44,16 +44,15 @@ async def test_build_report_on_demo_fixtures(services):
     assert report.summary.by_priority.get("P1", 0) >= 1
     assert report.summary.shown == total
     assert report.summary.uninvestigated == 0
-    assert report.uninvestigated == []
+    assert report.uninvestigated.total == 0
 
     entry = next(f for f in report.findings if f.finding_id == LOG4SHELL)
     assert entry.assessment.recommended_priority == Priority.P1
     assert entry.assessment.priority_rationale
     assert entry.evidence
-    assert entry.scenario.exploit_prerequisites
     assert entry.simulation.recommended_option_id
-    # The per-finding audit excerpt reconstructs the investigation.
-    assert any(e["action"] == "investigate_finding" for e in entry.audit_entries)
+    # The recent-audit footer reconstructs the investigation.
+    assert any(e["action"] == "investigate_finding" for e in report.recent_audit)
 
     # Provenance and caveats are carried, never dropped.
     assert any(
@@ -121,7 +120,10 @@ async def test_uninvestigated_findings_are_listed_not_hidden(services):
     report = build_report(services)
 
     assert report.summary.uninvestigated == 1
-    assert [u.finding_id for u in report.uninvestigated] == ["extra-host-999999-80tcp"]
+    assert report.uninvestigated.total == 1
+    assert report.uninvestigated.by_severity == {"low": 1}
+    assert report.uninvestigated.top_assets == [("extra-host", 1)]
+    assert report.uninvestigated.asset_count == 1
     assert all(f.finding_id != extra.finding_id for f in report.findings)
 
 
@@ -133,8 +135,7 @@ async def test_pending_actions_and_policy_audit_are_included(services):
 
     assert report.summary.open_pending_actions >= 1
     assert report.pending_actions
-    entry = next(f for f in report.findings if f.finding_id == LOG4SHELL)
-    assert any(e["action"].startswith("policy:") for e in entry.audit_entries)
+    assert any(e["action"].startswith("policy:") for e in report.recent_audit)
     assert report.recent_audit
     assert report.dry_run is True
 

@@ -353,9 +353,10 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
     ) -> dict[str, Any]:
         """Generate a self-contained HTML report of investigated findings.
 
-        Aggregates every investigated finding with its risk assessment,
-        evidence, exploit scenario, remediation options, and audit history;
-        imported-but-uninvestigated findings are listed separately. The file is
+        Aggregates every investigated finding into a compact card (risk
+        assessment, evidence counts, recommended fix, open questions) with a
+        priority queue and recent audit activity; imported-but-uninvestigated
+        findings are rolled up as counts by severity and host. The file is
         written (mode 0600) into the operator's reports directory
         (RISKPROOF_REPORTS_DIR, default ~/.riskproof/reports). Output paths are
         refused: like the import directory, the location is operator

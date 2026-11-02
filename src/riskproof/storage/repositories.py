@@ -75,6 +75,37 @@ class FindingRepository:
         row = self._db.query_one("SELECT COUNT(*) AS n FROM findings")
         return int(row["n"]) if row else 0
 
+    def uninvestigated_rollup(self, top_assets: int = 10) -> dict:
+        """Counts of findings with no investigation record, aggregated in SQL.
+
+        Returns ``total``, ``by_severity``, ``asset_count`` and the
+        ``top_assets`` (asset id, count) pairs, without loading any payloads
+        into Python.
+        """
+        base = (
+            "FROM findings f LEFT JOIN investigations i ON i.finding_id = f.finding_id "
+            "WHERE i.finding_id IS NULL"
+        )
+        by_severity = {
+            r["severity"]: int(r["n"])
+            for r in self._db.query_all(
+                f"SELECT f.severity AS severity, COUNT(*) AS n {base} GROUP BY f.severity"
+            )
+        }
+        asset = "COALESCE(json_extract(f.payload, '$.asset.asset_id'), '(unknown)')"
+        assets = self._db.query_all(
+            f"SELECT {asset} AS asset, COUNT(*) AS n {base} "
+            "GROUP BY asset ORDER BY n DESC, asset LIMIT ?",
+            (top_assets,),
+        )
+        count_row = self._db.query_one(f"SELECT COUNT(DISTINCT {asset}) AS n {base}")
+        return {
+            "total": sum(by_severity.values()),
+            "by_severity": by_severity,
+            "asset_count": int(count_row["n"]) if count_row else 0,
+            "top_assets": [(r["asset"], int(r["n"])) for r in assets],
+        }
+
 
 class InvestigationRepository:
     def __init__(self, db: Database) -> None:

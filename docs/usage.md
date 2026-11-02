@@ -105,9 +105,11 @@ uv run riskproof report --output out.html  # default: ./riskproof-report-<timest
 Or from an MCP session, ask for `generate_report` (same engine; the file lands
 in `RISKPROOF_REPORTS_DIR`, default `~/.riskproof/reports`, written with
 owner-only permissions). The report is read-only aggregation: executive rollup,
-priority queue with rationale, per-finding dimensions/evidence/scenario/
-remediation, pending actions, and the audit history. Priority filters are
-disclosed in the header, un-investigated imports are listed separately, and
+priority queue with rationale, a compact card per finding (key facts, risk
+dimensions, evidence counts, recommended fix, open questions), pending actions,
+and recent audit activity. It is deliberately short: large imports stay around
+100 KB. Priority filters are disclosed in the header, un-investigated imports
+are rolled up as counts by severity and host rather than listed row by row, and
 SAMPLE-fixture provenance is carried into the page. Reports contain
 vulnerability data — share them accordingly.
 

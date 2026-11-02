@@ -22,19 +22,17 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from riskproof import __version__
-from riskproof.engine import remediation, scenario
+from riskproof.engine import remediation
 from riskproof.engine.evidence import EPSS_CAVEAT, KEV_CAVEAT
 from riskproof.engine.investigation import recompute_assessment, strip_caveats
 from riskproof.engine.risk import RiskAssessment
 from riskproof.errors import InvalidInputError
-from riskproof.models.analysis import ExploitScenario, RemediationSimulation
+from riskproof.models.analysis import RemediationSimulation
 from riskproof.models.evidence import ApplicabilityStatus, Evidence, InvestigationRecord
 from riskproof.models.findings import Finding
 from riskproof.models.policy import Priority
 from riskproof.services import Services
 
-#: Audit entries kept per finding in the report.
-PER_FINDING_AUDIT_LIMIT = 25
 #: Global audit entries in the footer section.
 RECENT_AUDIT_LIMIT = 10
 #: CVEs named inline per finding; the rest are counted.
@@ -80,9 +78,7 @@ class FindingReport(BaseModel):
     finding: Finding
     record: InvestigationRecord
     assessment: RiskAssessment
-    scenario: ExploitScenario
     simulation: RemediationSimulation
-    audit_entries: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def finding_id(self) -> str:
@@ -93,12 +89,13 @@ class FindingReport(BaseModel):
         return self.record.evidence
 
 
-class UninvestigatedFinding(BaseModel):
-    finding_id: str
-    name: str
-    severity: str
-    cve_ids: list[str]
-    asset_id: str
+class UninvestigatedRollup(BaseModel):
+    """Imported findings with no investigation, as counts (never row-by-row)."""
+
+    total: int = 0
+    by_severity: dict[str, int] = Field(default_factory=dict)
+    asset_count: int = 0
+    top_assets: list[tuple[str, int]] = Field(default_factory=list)
 
 
 class ReportData(BaseModel):
@@ -110,7 +107,7 @@ class ReportData(BaseModel):
     notices: list[str] = Field(default_factory=list)
     caveats: dict[str, str] = Field(default_factory=dict)
     findings: list[FindingReport] = Field(default_factory=list)
-    uninvestigated: list[UninvestigatedFinding] = Field(default_factory=list)
+    uninvestigated: UninvestigatedRollup = Field(default_factory=UninvestigatedRollup)
     pending_actions: list[dict[str, Any]] = Field(default_factory=list)
     recent_audit: list[dict[str, Any]] = Field(default_factory=list)
     dry_run: bool = True
@@ -145,10 +142,6 @@ def build_report(services: Services, min_priority: Priority | str | None = None)
             f"The database holds more than {MAX_FINDINGS} investigated findings; "
             "narrow the report with min_priority or read the SQLite store directly."
         )
-    all_ids = services.findings.list_ids(limit=MAX_FINDINGS + 1)
-    if len(all_ids) > MAX_FINDINGS:
-        raise InvalidInputError(f"The database holds more than {MAX_FINDINGS} findings.")
-
     entries: list[FindingReport] = []
     provenance: dict[tuple[str, str, bool], ProvenanceView] = {}
     notices: list[str] = []
@@ -186,11 +179,7 @@ def build_report(services: Services, min_priority: Priority | str | None = None)
                 finding=finding,
                 record=record,
                 assessment=assessment,
-                scenario=scenario.build_exploit_scenario(finding, record, assessment),
                 simulation=remediation.simulate_remediation(finding, record, assessment),
-                audit_entries=services.audit.recent(
-                    limit=PER_FINDING_AUDIT_LIMIT, finding_id=finding_id
-                ),
             )
         )
 
@@ -199,19 +188,9 @@ def build_report(services: Services, min_priority: Priority | str | None = None)
     pending = services.pending.list_open(limit=PENDING_LIMIT)
     summary.open_pending_actions = len(pending)
 
-    uninvestigated = []
-    for fid in sorted(set(all_ids) - set(investigated_ids)):
-        imported = services.findings.get(fid)
-        uninvestigated.append(
-            UninvestigatedFinding(
-                finding_id=imported.finding_id,
-                name=imported.name,
-                severity=imported.severity.value,
-                cve_ids=imported.cve_ids,
-                asset_id=imported.asset.asset_id,
-            )
-        )
-    summary.uninvestigated = len(uninvestigated)
+    rollup = services.findings.uninvestigated_rollup(top_assets=UNINVESTIGATED_TOP_HOSTS)
+    uninvestigated = UninvestigatedRollup(**rollup)
+    summary.uninvestigated = uninvestigated.total
 
     return ReportData(
         generated_at=datetime.now(UTC),
@@ -470,24 +449,18 @@ def _finding_section(entry: FindingReport) -> str:
     )
 
 
-def _uninvestigated_section(items: list[UninvestigatedFinding]) -> str:
+def _uninvestigated_section(rollup: UninvestigatedRollup) -> str:
     """Counts, not rows: thousands of imported-only findings would bury the report."""
-    by_severity: dict[str, int] = {}
-    by_host: dict[str, int] = {}
-    for u in items:
-        by_severity[u.severity] = by_severity.get(u.severity, 0) + 1
-        by_host[u.asset_id] = by_host.get(u.asset_id, 0) + 1
-    sev_rows = [f"<td>{_esc(k)}</td><td>{n}</td>" for k, n in sorted(by_severity.items())]
-    top_hosts = sorted(by_host.items(), key=lambda kv: (-kv[1], kv[0]))
-    host_rows = [f"<td>{_esc(h)}</td><td>{n}</td>" for h, n in top_hosts[:UNINVESTIGATED_TOP_HOSTS]]
+    sev_rows = [f"<td>{_esc(k)}</td><td>{n}</td>" for k, n in sorted(rollup.by_severity.items())]
+    host_rows = [f"<td>{_esc(h)}</td><td>{n}</td>" for h, n in rollup.top_assets]
     return (
-        f"<h2>Imported but not yet investigated ({len(items)})</h2>"
+        f"<h2>Imported but not yet investigated ({rollup.total})</h2>"
         "<p class='meta'>These have no risk assessment yet, so nothing is concluded about "
         "them. Run <code>investigate_finding</code> on them (25 per call); the full list is "
         "in the RiskProof database.</p>"
         + _table(["Severity", "Findings"], sev_rows)
-        + f"<h3>Hosts with the most (top {min(len(top_hosts), UNINVESTIGATED_TOP_HOSTS)} "
-        f"of {len(top_hosts)})</h3>" + _table(["Asset", "Findings"], host_rows)
+        + f"<h3>Hosts with the most (top {len(rollup.top_assets)} of {rollup.asset_count})</h3>"
+        + _table(["Asset", "Findings"], host_rows)
     )
 
 
@@ -528,7 +501,7 @@ def render_html(report: ReportData) -> str:
         + (_queue_table(report) or "<p>No investigated findings in scope.</p>")
     )
     parts.extend(_finding_section(e) for e in report.findings)
-    if report.uninvestigated:
+    if report.uninvestigated.total:
         parts.append(_uninvestigated_section(report.uninvestigated))
     if report.pending_actions:
         rows = [

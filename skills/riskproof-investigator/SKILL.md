@@ -142,7 +142,7 @@ we do and why", and cite it instead of reconstructing history from memory.
 generate_report(min_priority="P2")                # or omit for everything
 ```
 Writes a self-contained HTML report (executive rollup, priority queue with
-rationale, per-finding evidence and audit history) into the operator's reports
+rationale, a compact card per finding, recent audit activity) into the operator's reports
 directory and returns the path plus summary counts. Output paths are operator
 configuration — never pass or accept a path. Tell the user the file location
 and that it is written owner-only; the report repeats the SAMPLE/live
