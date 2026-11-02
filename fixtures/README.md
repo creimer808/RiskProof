@@ -11,6 +11,7 @@ threat intelligence.
 | `findings_sample.json` | The same findings in RiskProof's normalized JSON form — the offline demo dataset. |
 | `assets_sample.json` | Asset context (criticality, environment, internet-facing, owner, services) for the demo hosts. |
 | `epss_sample.json` | SAMPLE FIRST EPSS API response. Values are illustrative, **not** live EPSS data. |
+| `greynoise_sample.json` | SAMPLE GreyNoise tags and per-tag activity (relative `days_ago`, so it never ages out). Illustrative, **not** live exploitation data. |
 | `kev_sample.json` | SAMPLE CISA KEV extract containing only the demo CVEs. Absence from this file is **NOT** evidence that a CVE is absent from the real KEV catalog. |
 
 Honesty rules enforced in code:

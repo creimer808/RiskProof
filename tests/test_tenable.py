@@ -10,11 +10,14 @@ import json
 
 import httpx
 import pytest
+from mcp.server.fastmcp import FastMCP
 
 from riskproof.engine import importer
 from riskproof.errors import InvalidInputError, ProviderUnavailable
 from riskproof.ingest.tenable import finding_from_tenable_vuln
+from riskproof.models.findings import Asset, Finding, Severity
 from riskproof.providers.tenable import TenableBridge, TenableClient
+from riskproof.tools import register_tools
 
 SECRET = "s3cr3t-key-value"
 ACCESS = "acc3ss-key-value"
@@ -313,3 +316,160 @@ async def test_import_tenable_without_credentials_is_provider_unavailable(servic
 async def test_import_tenable_limit_validation(services):
     with pytest.raises(InvalidInputError):
         await importer.import_tenable(services, limit=0, client=make_client(FakeTenable([])))
+
+
+# --- lifecycle: changes + reconciliation ---------------------------------------
+
+VULN_B = {"plugin": {"id": 2, "name": "SSH issue", "cve": []}}
+VULN_H = {"plugin": {"id": 3, "name": "Weak TLS", "cve": []}, "severity": "high", "severity_id": 3}
+
+
+def fid(**over) -> str:
+    return finding_from_tenable_vuln(vuln(**over)).finding_id
+
+
+def status_of(services, finding_id: str) -> str:
+    return services.db.query_one("SELECT status FROM findings WHERE finding_id = ?", (finding_id,))[
+        "status"
+    ]
+
+
+async def run_import(services, records, **kwargs):
+    fake = FakeTenable([records])
+    return await importer.import_tenable(services, client=make_client(fake), **kwargs)
+
+
+async def seed_a_and_b(services):
+    await run_import(services, [vuln(), vuln(**VULN_B)])
+    return fid(), fid(**VULN_B)
+
+
+async def test_changes_report_new_then_updated(services):
+    first = await run_import(services, [vuln(), vuln(**VULN_B)])
+    assert first["changes"] == {"new": 2, "updated": 0, "reopened": 0, "resolved": 0}
+    second = await run_import(services, [vuln(), vuln(**VULN_B)])
+    assert second["changes"] == {"new": 0, "updated": 2, "reopened": 0, "resolved": 0}
+    entry = next(e for e in services.audit.recent() if e["action"] == "import_tenable")
+    assert entry["details"]["changes"]["updated"] == 2
+
+
+async def test_reconcile_preview_lists_candidates_but_changes_nothing(services):
+    _, b = await seed_a_and_b(services)
+    summary = await run_import(services, [vuln()])
+    rec = summary["reconciliation"]
+    assert rec["would_mark_not_seen"] == 1
+    assert rec["in_scope_open"] == 2
+    assert rec["applied"] is False
+    assert rec["skipped_reason"] is None
+    assert rec["sample_ids"] == [b]
+    assert status_of(services, b) == "open"
+
+
+async def test_reconcile_applies_only_when_requested(services):
+    _, b = await seed_a_and_b(services)
+    summary = await run_import(services, [vuln()], reconcile=True)
+    assert summary["reconciliation"]["applied"] is True
+    assert status_of(services, b) == "not_seen"
+    entry = next(e for e in services.audit.recent() if e["action"] == "reconcile_not_seen")
+    assert entry["details"]["count"] == 1 and entry["details"]["sample_ids"] == [b]
+
+
+async def test_truncated_export_never_reconciles(services):
+    await seed_a_and_b(services)
+    summary = await run_import(services, [vuln(), vuln(**VULN_B)], limit=1, reconcile=True)
+    assert summary["provenance"]["truncated"] is True
+    assert "truncat" in summary["reconciliation"]["skipped_reason"]
+    assert summary["reconciliation"]["applied"] is False
+    assert services.findings.inactive_ids() == set()
+
+
+async def test_empty_export_never_reconciles(services):
+    await seed_a_and_b(services)
+    services.settings.reconcile_max_missing_fraction = 1.0  # guard must not be what saves us
+    summary = await run_import(services, [], reconcile=True)
+    assert "no findings" in summary["reconciliation"]["skipped_reason"]
+    assert services.findings.inactive_ids() == set()
+
+
+async def test_export_with_skipped_records_never_reconciles(services):
+    await seed_a_and_b(services)
+    services.settings.reconcile_max_missing_fraction = 1.0
+    bad = {"asset": {}, "plugin": {"id": 7}}
+    summary = await run_import(services, [vuln(), bad], reconcile=True)
+    assert "skipped" in summary["reconciliation"]["skipped_reason"]
+    assert services.findings.inactive_ids() == set()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"since_days": 7},
+        {"cidr_range": "10.0.0.0/24"},
+        {"only_with_cve": True},
+        {"state": ["fixed"]},
+        {"state": ["open"]},
+    ],
+)
+async def test_partial_scope_never_reconciles(services, kwargs):
+    await seed_a_and_b(services)
+    services.settings.reconcile_max_missing_fraction = 1.0
+    summary = await run_import(services, [vuln()], reconcile=True, **kwargs)
+    assert summary["reconciliation"]["skipped_reason"]
+    assert summary["reconciliation"]["applied"] is False
+    assert services.findings.inactive_ids() == set()
+
+
+async def test_severity_subset_reconciles_only_that_severity(services):
+    await run_import(
+        services, [vuln(), vuln(**VULN_B), vuln(**VULN_H)], severity=["critical", "high"]
+    )
+    summary = await run_import(services, [vuln()], severity=["critical"], reconcile=True)
+    assert summary["reconciliation"]["applied"] is True
+    assert status_of(services, fid(**VULN_B)) == "not_seen"
+    assert status_of(services, fid(**VULN_H)) == "open"
+
+
+async def test_fixed_state_import_marks_resolved(services):
+    a, _ = await seed_a_and_b(services)
+    summary = await run_import(services, [vuln(state="FIXED")], state=["fixed"])
+    assert summary["changes"]["resolved"] == 1
+    assert status_of(services, a) == "resolved"
+    assert "skipped_reason" in summary["reconciliation"]  # state=fixed never reconciles
+    assert summary["reconciliation"]["skipped_reason"]
+
+
+async def test_reappearing_finding_counts_as_reopened(services):
+    _, b = await seed_a_and_b(services)
+    await run_import(services, [vuln()], reconcile=True)
+    summary = await run_import(services, [vuln(), vuln(**VULN_B)])
+    assert summary["changes"]["reopened"] == 1
+    assert status_of(services, b) == "open"
+
+
+async def test_nessus_and_manual_findings_survive_tenable_reconcile(services):
+    await importer.import_nessus(services, "sample_scan.nessus")
+    services.findings.save(
+        Finding(
+            finding_id="manual-1",
+            name="Manual",
+            severity=Severity.CRITICAL,
+            asset=Asset(asset_id="m1"),
+        )
+    )
+    await seed_a_and_b(services)
+    summary = await run_import(services, [vuln()], reconcile=True)
+    assert summary["reconciliation"]["applied"] is True
+    assert services.findings.inactive_ids() == {fid(**VULN_B)}
+
+
+async def test_nessus_import_reports_changes(services):
+    summary = await importer.import_nessus(services, "sample_scan.nessus")
+    assert summary["changes"]["new"] > 0
+    assert "reconciliation" not in summary
+
+
+async def test_tool_signature_has_reconcile_default_false(services):
+    mcp = FastMCP("t")
+    register_tools(mcp, services)
+    tool = next(t for t in await mcp.list_tools() if t.name == "import_tenable")
+    assert tool.inputSchema["properties"]["reconcile"]["default"] is False

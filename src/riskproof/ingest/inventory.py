@@ -16,9 +16,17 @@ Format (JSON, path set by ``RISKPROOF_ASSET_INVENTORY``)::
     }
 
 ``match`` takes hostnames / FQDNs / asset ids (exact, case-insensitive), IP
-addresses, or CIDR ranges. When several rules match a finding, each field comes from the
-most specific rule that sets it: a hostname or asset-id rule beats any CIDR,
-and a longer prefix beats a shorter one; ties go to the earlier rule.
+addresses, or CIDR ranges. ``tags`` matches Tenable asset tags (category and value,
+case-insensitive): every listed category must be present on the asset, with any one of
+its listed values. A rule may set ``match``, ``tags``, or both (then both must hold)::
+
+    {"tags": {"Location": "DMZ"}, "internet_facing": true, "environment": "dmz"}
+    {"tags": {"Team": ["Network", "Edge"]}, "owner": "network-team"}
+
+When several rules match a finding, each field comes from the most specific rule that
+sets it: a hostname or asset-id rule beats a tag rule, which beats any CIDR, and a longer
+prefix beats a shorter one; ties go to the earlier rule. Tags come from Tenable; what a
+tag implies comes only from this file.
 
 Security model: the inventory is operator configuration, like the validation
 allowlist. No tool parameter can edit it, and its values override asset
@@ -40,11 +48,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from riskproof.errors import ConfigurationError
 from riskproof.models.findings import AssetCriticality, Finding
+from riskproof.models.tags import validate_tag_filter
 
 MAX_INVENTORY_BYTES = 5 * 1024 * 1024
 CONTEXT_FIELDS = ("criticality", "environment", "internet_facing", "owner")
 _NAME_RE = re.compile(r"^[a-z0-9_][a-z0-9_.-]{0,252}$")
 _NAME_SPECIFICITY = 1_000  # above any prefix length (max 128)
+_TAG_SPECIFICITY = 500  # below a hostname, above any CIDR
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
@@ -54,7 +64,8 @@ class AssetRule(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    match: list[str] = Field(min_length=1, max_length=1_000)
+    match: list[str] = Field(default_factory=list, max_length=1_000)
+    tags: dict[str, list[str]] = Field(default_factory=dict)
     criticality: AssetCriticality | None = None
     environment: str | None = Field(default=None, max_length=64)
     internet_facing: bool | None = None
@@ -66,16 +77,33 @@ class AssetRule(BaseModel):
     def _one_or_many(cls, value: Any) -> Any:
         return [value] if isinstance(value, str) else value
 
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _clean_tags(cls, value: Any) -> Any:
+        if value in (None, {}):
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("tags must be an object of {category: value | [values]}")
+        wrapped = {k: [v] if isinstance(v, str) else v for k, v in value.items()}
+        return validate_tag_filter(wrapped)
+
     @model_validator(mode="after")
     def _sets_something(self) -> AssetRule:
+        if not self.match and not self.tags:
+            raise ValueError("rule has neither 'match' nor 'tags'")
         if all(getattr(self, name) is None for name in CONTEXT_FIELDS):
-            raise ValueError(f"rule {self.match} sets none of {', '.join(CONTEXT_FIELDS)}")
+            raise ValueError(
+                f"rule {self.match or self.tags} sets none of {', '.join(CONTEXT_FIELDS)}"
+            )
         return self
 
 
 class _InventoryDocument(BaseModel):
     model_config = ConfigDict(extra="ignore")  # allow "_comment"-style keys
 
+    #: Optional free text the report prints next to the asset context, e.g. to say
+    #: an inventory is illustrative. Never used for matching.
+    label: str | None = Field(default=None, max_length=300)
     rules: list[AssetRule]
 
 
@@ -116,10 +144,16 @@ def _compile(rules: list[AssetRule]) -> list[_Matcher]:
 class AssetInventory:
     """Parsed inventory rules, ready to apply to findings."""
 
-    def __init__(self, rules: list[AssetRule], source: str) -> None:
+    def __init__(self, rules: list[AssetRule], source: str, label: str | None = None) -> None:
         self.rules = rules
         self.source = source
+        self.label = label
         self._matchers = _compile(rules)
+        self._tag_sets = {
+            i: {k.lower(): {v.lower() for v in vs} for k, vs in rule.tags.items()}
+            for i, rule in enumerate(rules)
+            if rule.tags
+        }
 
     @classmethod
     def parse(cls, data: Any, source: str) -> AssetInventory:
@@ -127,7 +161,7 @@ class AssetInventory:
             document = _InventoryDocument.model_validate(data)
         except ValidationError as exc:
             raise ConfigurationError(f"Asset inventory {source} is invalid: {exc}") from exc
-        return cls(document.rules, source)
+        return cls(document.rules, source, document.label)
 
     def apply(self, finding: Finding) -> tuple[Finding, list[str]]:
         """Return the finding with inventory context applied, plus matched rules."""
@@ -152,6 +186,12 @@ class AssetInventory:
                 and ip in m.network
             )
         ]
+        asset_tags = {k.lower(): {v.lower() for v in vs} for k, vs in asset.tags.items()}
+        hits = [m for m in hits if self._tags_hold(m.rule_index, asset_tags)]
+        for index, rule in enumerate(self.rules):
+            if rule.tags and not rule.match and self._tags_hold(index, asset_tags):
+                token = "tag:" + ",".join(f"{k}={'|'.join(v)}" for k, v in rule.tags.items())
+                hits.append(_Matcher(index, token, _TAG_SPECIFICITY))
         if not hits:
             return finding, []
         hits.sort(key=lambda m: (-m.specificity, m.rule_index))
@@ -168,6 +208,13 @@ class AssetInventory:
                     break
         enriched = finding.model_copy(update={"asset": asset.model_copy(update=update)})
         return enriched, used
+
+    def _tags_hold(self, rule_index: int, asset_tags: dict[str, set[str]]) -> bool:
+        """True when the rule has no tag condition, or the asset satisfies all of it."""
+        required = self._tag_sets.get(rule_index)
+        if not required:
+            return True
+        return all(asset_tags.get(cat, set()) & values for cat, values in required.items())
 
 
 class AssetInventorySource:

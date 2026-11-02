@@ -37,6 +37,7 @@ import httpx
 
 from riskproof.config import Settings
 from riskproof.errors import ProviderUnavailable
+from riskproof.models.tags import MAX_CATEGORY_CHARS, MAX_VALUE_CHARS, clean_text
 from riskproof.providers.base import build_client
 
 ACCESS_KEY_ENV = "TENABLE_ACCESS_KEY"
@@ -76,6 +77,15 @@ class TenableBridge:
                 "when the host agent provides it."
             ),
         }
+
+
+@dataclass
+class TagValues:
+    """Tag categories and their values as defined in the tenant."""
+
+    categories: dict[str, list[str]]
+    total_values: int
+    truncated: bool = False
 
 
 @dataclass
@@ -256,6 +266,48 @@ class TenableClient:
                 truncated=truncated,
                 warnings=warnings,
             )
+
+    async def list_tag_values(self, *, page_size: int = 1000, max_values: int = 5000) -> TagValues:
+        """List the tenant's tag categories and values (``GET /tags/values``).
+
+        Read-only. Used to resolve a human phrase like "the DMZ" to the exact
+        category and value an export filter needs.
+        """
+        categories: dict[str, list[str]] = {}
+        seen = 0
+        offset = 0
+        truncated = False
+        async with build_client(
+            timeout=self._timeout, transport=self._transport, follow_redirects=False
+        ) as client:
+            while True:
+                data = await self._request(
+                    client, "GET", f"/tags/values?limit={page_size}&offset={offset}"
+                )
+                page = data.get("values") if isinstance(data, dict) else None
+                if not isinstance(page, list):
+                    raise ProviderUnavailable("Tenable tag listing was not in the expected shape.")
+                for entry in page:
+                    category = (
+                        clean_text(entry.get("category_name"), MAX_CATEGORY_CHARS)
+                        if isinstance(entry, dict)
+                        else None
+                    )
+                    if category is None:
+                        continue
+                    values = categories.setdefault(category, [])
+                    value = clean_text(entry.get("value"), MAX_VALUE_CHARS)
+                    if value is None:
+                        continue
+                    if seen >= max_values:
+                        truncated = True
+                        break
+                    values.append(value)
+                    seen += 1
+                if truncated or len(page) < page_size:
+                    break
+                offset += page_size
+        return TagValues(categories=categories, total_values=seen, truncated=truncated)
 
     async def _cancel(self, client: httpx.AsyncClient, export_uuid: str) -> None:
         """Best-effort: stop Tenable generating chunks we will not download."""

@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from riskproof.models.intel import EPSSObservation, KEVCatalog, KEVStatus
+from riskproof.models.intel import EPSSObservation, GreyNoiseResult, KEVCatalog, KEVStatus
 from riskproof.providers.base import ProviderError
 from riskproof.providers.epss import EPSSProvider
+from riskproof.providers.greynoise_parse import evaluate_cve, parse_activity, parse_tag_catalog
 from riskproof.providers.kev import KEVProvider
 
 EPSS_FIXTURE = "epss_sample.json"
 KEV_FIXTURE = "kev_sample.json"
+GREYNOISE_FIXTURE = "greynoise_sample.json"
 SAMPLE_NOTICE = "SAMPLE fixture data for offline demonstration — not live threat intelligence."
 
 
@@ -73,3 +75,33 @@ class FixtureIntelSource:
             )
             for cve in dict.fromkeys(cves)
         ]
+
+    async def greynoise_for(
+        self, cves: Sequence[str], now: datetime | None = None, window_days: int = 3
+    ) -> dict[str, GreyNoiseResult]:
+        """SAMPLE GreyNoise readings, parsed with the same code as live payloads.
+
+        Fixture activity is stored as ``days_ago`` so it never ages out of the window.
+        """
+        payload = self._load(GREYNOISE_FIXTURE)
+        today = (now or datetime.now(UTC)).astimezone(UTC).date()
+        tag_map = parse_tag_catalog(payload)
+        activity: dict[str, dict[str, dict[str, int]]] = {}
+        raw_activity = payload.get("activity")
+        for tag_id, buckets in (raw_activity if isinstance(raw_activity, dict) else {}).items():
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for bucket in buckets if isinstance(buckets, list) else []:
+                day = today - timedelta(days=int(bucket.get("days_ago", 0)))
+                grouped.setdefault(str(bucket.get("intention")), []).append(
+                    {
+                        "timestamp": f"{day.isoformat()}T00:00:00Z",
+                        "active_ips": bucket.get("active_ips"),
+                    }
+                )
+            activity[tag_id] = parse_activity({"activity": grouped})
+        return {
+            cve: evaluate_cve(
+                cve, tag_map.get(cve, []), activity, today=today, window_days=window_days
+            )
+            for cve in dict.fromkeys(cves)
+        }

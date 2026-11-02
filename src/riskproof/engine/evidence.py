@@ -33,6 +33,11 @@ EPSS_CAVEAT = (
 KEV_CAVEAT = (
     "This means the vulnerability is exploited in the wild — not that this asset was compromised."
 )
+GREYNOISE_CAVEAT = (
+    "Scanning/exploitation attempts observed against GreyNoise's own sensors for this CVE; "
+    "not evidence that this asset was targeted, reachable or compromised. "
+    "No GreyNoise tag does not mean not exploited."
+)
 
 
 def _next_id(prefix: str, now: datetime) -> str:
@@ -126,6 +131,42 @@ def _kev_evidence(cve: str, intel: ThreatIntelBundle, finding_id: str, now: date
         statement=statement,
         confidence=confidence,
         source=status.catalog,
+        collected_at=now,
+    )
+
+
+def _greynoise_evidence(
+    cve: str, intel: ThreatIntelBundle, finding_id: str, now: datetime
+) -> Evidence | None:
+    result = intel.greynoise.get(cve)
+    if result is None:
+        return None
+    names = ", ".join(f"'{t.name}'" for t in result.tags[:3])
+    if result.state == "observed":
+        statement = (
+            f"GreyNoise saw malicious scanning/exploitation activity for {cve} on "
+            f"{len(result.malicious_ips_by_day)} day(s) in the lookback window "
+            f"(peak {result.peak_malicious_ips} distinct IPs/day, latest "
+            f"{result.last_malicious_day}; tags: {names}). {GREYNOISE_CAVEAT}"
+        )
+        confidence = Confidence.CONFIRMED
+    elif result.state == "quiet":
+        statement = (
+            f"GreyNoise has tags for {cve} ({names}) but saw no malicious activity in the "
+            f"lookback window. {GREYNOISE_CAVEAT}"
+        )
+        confidence = Confidence.CONFIRMED
+    else:
+        reason = (result.reason or result.state).rstrip(". ")
+        statement = f"No GreyNoise reading for {cve}: {reason}."
+        confidence = Confidence.MISSING
+    return Evidence(
+        id=_next_id("ev-gn", now),
+        finding_id=finding_id,
+        kind=EvidenceKind.THREAT_INTEL,
+        statement=statement,
+        confidence=confidence,
+        source=intel.greynoise_source,
         collected_at=now,
     )
 
@@ -230,6 +271,10 @@ def build_investigation_record(
         for cve in finding.cve_ids:
             record.evidence.append(_epss_evidence(cve, intel, finding.finding_id, now))
             record.evidence.append(_kev_evidence(cve, intel, finding.finding_id, now))
+            if intel.greynoise_source != "unavailable":
+                gn = _greynoise_evidence(cve, intel, finding.finding_id, now)
+                if gn is not None:
+                    record.evidence.append(gn)
     record.evidence.append(_asset_evidence(finding, now, inventory_rules))
 
     record.open_questions = _open_questions(finding, intel)

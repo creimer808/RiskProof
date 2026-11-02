@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     tenable_export_timeout_seconds: float = 300.0
     tenable_poll_interval_seconds: float = 3.0
 
+    #: Optional GreyNoise exploitation signal. The API key is NEVER a setting: it
+    #: is read from GREYNOISE_API_KEY in the server's environment only.
+    greynoise_base_url: str = "https://api.greynoise.io"
+    #: Days of scanning activity that count as "exploited now" (today + previous N-1).
+    greynoise_window_days: int = Field(default=3, ge=1, le=10)
+    #: Max GreyNoise activity requests per investigation run (0 = none).
+    greynoise_max_calls_per_run: int = Field(default=100, ge=0, le=1000)
+
+    #: Mass-vanish guard for import reconciliation: skip marking findings
+    #: `not_seen` when more than this fraction of in-scope open findings would
+    #: be flagged (a sign the export was incomplete, not that all was fixed).
+    reconcile_max_missing_fraction: float = Field(default=0.5, ge=0.0, le=1.0)
+
     #: Actor name recorded in the audit trail for automated decisions.
     audit_actor: str = "riskproof-agent"
 

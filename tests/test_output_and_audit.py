@@ -45,7 +45,12 @@ async def test_summary_keeps_reporting_facts_and_drops_bulk(services):
 
     # Provenance and the SAMPLE notice appear once for the batch, not per finding.
     assert summary["intel_provenance"] == [
-        {"epss_source": "sample-fixture", "kev_source": "sample-fixture", "degraded": True}
+        {
+            "epss_source": "sample-fixture",
+            "kev_source": "sample-fixture",
+            "greynoise_source": "sample-fixture",
+            "degraded": True,
+        }
     ]
     assert len(summary["intel_notices"]) == len(set(summary["intel_notices"]))
     assert any("SAMPLE" in n for n in summary["intel_notices"])

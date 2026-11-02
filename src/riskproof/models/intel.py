@@ -94,6 +94,34 @@ class KEVCatalog(BaseModel):
     fetched_at: datetime | None = None
 
 
+class GreyNoiseTag(BaseModel):
+    """A GreyNoise tag linked to a CVE. Names are untrusted third-party text."""
+
+    id: str = Field(min_length=1, max_length=128)
+    slug: str = Field(max_length=128)
+    name: str = Field(max_length=120)
+    intention: Literal["malicious", "suspicious"]
+
+
+class GreyNoiseResult(BaseModel):
+    """What GreyNoise sensors saw for one CVE inside the lookup window.
+
+    ``observed`` means scanning or exploitation attempts against GreyNoise's own
+    sensors, never evidence about a specific asset. ``no_data`` and
+    ``not_checked`` are gaps, not signs of safety.
+    """
+
+    cve: str
+    state: Literal["observed", "quiet", "no_data", "not_checked"]
+    reason: str | None = None
+    tags: list[GreyNoiseTag] = Field(default_factory=list)
+    #: Distinct active IPs per UTC day (``YYYY-MM-DD``), in-window days with activity only.
+    malicious_ips_by_day: dict[str, int] = Field(default_factory=dict)
+    suspicious_ips_by_day: dict[str, int] = Field(default_factory=dict)
+    peak_malicious_ips: int = 0
+    last_malicious_day: str | None = None
+
+
 class ThreatIntelBundle(BaseModel):
     """Collected external intelligence for a set of CVEs."""
 
@@ -103,6 +131,8 @@ class ThreatIntelBundle(BaseModel):
     collected_at: datetime
     epss_source: Literal["first.org", "sample-fixture", "unavailable"] = "unavailable"
     kev_source: Literal["cisa-live", "sample-fixture", "unavailable"] = "unavailable"
+    greynoise: dict[str, GreyNoiseResult] = Field(default_factory=dict)
+    greynoise_source: Literal["greynoise", "sample-fixture", "unavailable"] = "unavailable"
     #: True when we had to degrade (fallback to fixtures or partial failure).
     degraded: bool = False
     notices: list[str] = Field(default_factory=list)
@@ -123,6 +153,7 @@ class ThreatIntelBundle(BaseModel):
                 "cve_ids": [c for c in self.cve_ids if c in wanted],
                 "epss": {c: v for c, v in self.epss.items() if c in wanted},
                 "kev_status": [s for s in self.kev_status if s.cve in wanted],
+                "greynoise": {c: v for c, v in self.greynoise.items() if c in wanted},
                 "notices": list(self.notices),
             }
         )

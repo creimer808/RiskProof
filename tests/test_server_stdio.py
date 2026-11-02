@@ -28,6 +28,7 @@ EXPECTED_TOOLS = {
     "execute_risk_policy",
     "import_nessus",
     "import_tenable",
+    "list_tenable_tags",
     "get_audit_trail",
     "generate_report",
 }

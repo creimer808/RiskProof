@@ -20,6 +20,7 @@ from riskproof.models.findings import (
     Severity,
     VPRObservation,
 )
+from riskproof.models.tags import parse_asset_tags
 
 _SEVERITY_NAMES = {s.value: s for s in Severity}
 
@@ -105,6 +106,7 @@ def finding_from_tenable_vuln(record: dict[str, Any]) -> Finding:
         ip_address=ip,
         operating_system=operating_system,
         labels=labels,
+        tags=parse_asset_tags(asset_raw.get("tags")),
     )
 
     port = port_raw.get("port")
@@ -141,6 +143,8 @@ def finding_from_tenable_vuln(record: dict[str, Any]) -> Finding:
             raw[flag] = plugin[flag]
     if dropped:
         raw["dropped_invalid_cves"] = dropped
+    if asset.tags:
+        raw["tags_source"] = "export"
 
     return Finding(
         finding_id=slugify(f"tenable-{asset_key}-{plugin_id}-{port or 0}{protocol or ''}"),

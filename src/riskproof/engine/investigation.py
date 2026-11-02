@@ -7,6 +7,7 @@ degradation explicit in every output.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from riskproof.engine import policy_engine
 from riskproof.engine.evidence import (
     EPSS_CAVEAT,
+    GREYNOISE_CAVEAT,
     KEV_CAVEAT,
     apply_applicability_observation,
     build_investigation_record,
@@ -22,6 +24,7 @@ from riskproof.engine.evidence import (
     carry_forward,
 )
 from riskproof.engine.risk import RiskAssessment, assess
+from riskproof.engine.riskscore import RiskScore, rank_key, score_batch
 from riskproof.errors import (
     AuthorizationDenied,
     InvalidInputError,
@@ -33,11 +36,12 @@ from riskproof.ingest.fixtures import (
     load_assets_fixture,
     load_findings_fixture,
 )
-from riskproof.models.evidence import InvestigationRecord
-from riskproof.models.findings import Finding, ServiceObservation, criticality_value
+from riskproof.models.evidence import Evidence, EvidenceKind, InvestigationRecord
+from riskproof.models.findings import Finding, ServiceObservation, Severity, criticality_value
 from riskproof.models.intel import (
     EPSSObservation,
     EPSSUnavailable,
+    GreyNoiseResult,
     KEVStatus,
     ThreatIntelBundle,
 )
@@ -59,17 +63,40 @@ FULL_DETAIL_HINT = (
 )
 
 
+_SEVERITY_RANK = {
+    Severity.CRITICAL: 5,
+    Severity.HIGH: 4,
+    Severity.MEDIUM: 3,
+    Severity.LOW: 2,
+    Severity.INFO: 1,
+    Severity.UNKNOWN: 0,
+}
+
+_CVE_IN_TEXT = re.compile(r"CVE-\d{4}-\d{4,}")
+#: CVE ids named per list in the compact intel rollup.
+ROLLUP_CVE_LIMIT = 10
+
+ROLLUP_NOTE = (
+    "Intel statements for the other CVEs on this finding are summarized here, not listed; "
+    "detail='full' returns every statement."
+)
+
+
 class InvestigationReport(BaseModel):
     finding_id: str
     finding: Finding
     record: InvestigationRecord
     assessment: RiskAssessment
+    risk_score: RiskScore | None = None
 
     def summary(self) -> dict[str, Any]:
         """Compact, agent-facing view: everything needed to report on the
         finding, without the bulky source text or repeated intel."""
         f, record, a = self.finding, self.record, self.assessment
         asset = f.asset
+        scored = {"risk_score": self.risk_score.model_dump(mode="json")} if self.risk_score else {}
+        evidence, rollup = self._compact_evidence()
+        extra = {"intel_rollup": rollup} if rollup else {}
         return {
             "finding_id": f.finding_id,
             "name": f.name,
@@ -87,6 +114,7 @@ class InvestigationReport(BaseModel):
                 "environment": asset.environment,
                 "internet_facing": asset.internet_facing,
                 "owner": asset.owner,
+                **({"tags": asset.tags} if asset.tags else {}),
             },
             "priority": a.recommended_priority.value if a.recommended_priority else None,
             "priority_rationale": a.priority_rationale,
@@ -105,16 +133,63 @@ class InvestigationReport(BaseModel):
                     # Caveats are stated once per response (see summarize_reports).
                     "statement": strip_caveats(e.statement),
                 }
-                for e in record.evidence
+                for e in evidence
             ],
             "evidence_by_confidence": confidence_summary(record),
             "open_questions": record.open_questions,
+            **scored,
+            **extra,
+        }
+
+    def _compact_evidence(self) -> tuple[list[Evidence], dict[str, Any] | None]:
+        """Evidence for the summary view: bundle findings keep intel for one CVE.
+
+        A patch bundle can list 90+ CVEs and each one adds EPSS/KEV/GreyNoise
+        statements. The summary keeps those for the scored CVE (the one the
+        score and ranking cite) and rolls the rest up as counts. Everything
+        else, including all non-intel evidence, is kept as is.
+        """
+        f, record = self.finding, self.record
+        anchor = None
+        if self.risk_score is not None and self.risk_score.vulnerability_kind == "cve":
+            anchor = self.risk_score.vulnerability
+        elif self.risk_score is None and f.cve_ids:
+            anchor = f.cve_ids[0]
+        if anchor is None:
+            return list(record.evidence), None
+        kept: list[Evidence] = []
+        omitted = 0
+        for e in record.evidence:
+            found = _CVE_IN_TEXT.search(e.statement)
+            if e.kind == EvidenceKind.THREAT_INTEL and found and found.group(0) != anchor:
+                omitted += 1
+            else:
+                kept.append(e)
+        intel = record.intel
+        if omitted == 0 or intel is None:
+            return kept, None
+        own = set(f.cve_ids)
+        kev = sorted(s.cve for s in intel.kev_status if s.in_kev and s.cve in own)
+        observed = sorted(c for c in own if (g := intel.greynoise.get(c)) and g.state == "observed")
+        return kept, {
+            "scored_cve": anchor,
+            "cves_total": len(f.cve_ids),
+            "kev_listed": len(kev),
+            "kev_cves": kev[:ROLLUP_CVE_LIMIT],
+            "greynoise_observed": len(observed),
+            "greynoise_observed_cves": observed[:ROLLUP_CVE_LIMIT],
+            "statements_omitted": omitted,
+            "note": ROLLUP_NOTE,
         }
 
 
 def strip_caveats(statement: str) -> str:
     """Remove the per-statement caveats for compact views that state them once."""
-    return statement.replace(f" {EPSS_CAVEAT}", "").replace(f" {KEV_CAVEAT}", "")
+    return (
+        statement.replace(f" {EPSS_CAVEAT}", "")
+        .replace(f" {KEV_CAVEAT}", "")
+        .replace(f" {GREYNOISE_CAVEAT}", "")
+    )
 
 
 def summarize_reports(reports: list[InvestigationReport]) -> dict[str, Any]:
@@ -125,16 +200,39 @@ def summarize_reports(reports: list[InvestigationReport]) -> dict[str, Any]:
         intel = report.record.intel
         if intel is None:
             continue
-        provenance.add((intel.epss_source, intel.kev_source, intel.degraded))
+        provenance.add(
+            (intel.epss_source, intel.kev_source, intel.greynoise_source, intel.degraded)
+        )
         notices.extend(n for n in intel.notices if n not in notices)
+    scored = [r for r in reports if r.risk_score is not None]
+    by_rank = sorted(scored, key=lambda r: rank_key(r.risk_score), reverse=True)  # type: ignore[arg-type]
+    ranking = [
+        {
+            "finding_id": r.finding_id,
+            "rank": position,
+            "score": r.risk_score.score,  # type: ignore[union-attr]
+            "exploited_now": r.risk_score.exploited_now,  # type: ignore[union-attr]
+        }
+        for position, r in enumerate(by_rank, start=1)
+    ]
     return {
         "investigations": [r.summary() for r in reports],
+        "ranking": ranking,
         "intel_provenance": [
-            {"epss_source": epss, "kev_source": kev, "degraded": degraded}
-            for epss, kev, degraded in sorted(provenance)
+            {
+                "epss_source": epss,
+                "kev_source": kev,
+                "greynoise_source": greynoise,
+                "degraded": degraded,
+            }
+            for epss, kev, greynoise, degraded in sorted(provenance)
         ],
         "intel_notices": notices,
-        "intel_caveats": {"epss": EPSS_CAVEAT, "kev_listed": KEV_CAVEAT},
+        "intel_caveats": {
+            "epss": EPSS_CAVEAT,
+            "kev_listed": KEV_CAVEAT,
+            "greynoise": GREYNOISE_CAVEAT,
+        },
         "detail": "summary",
         "note": FULL_DETAIL_HINT,
     }
@@ -154,6 +252,36 @@ def normalize_cve_list(cve_ids: list[str]) -> tuple[list[str], list[str]]:
         elif candidate not in valid:
             valid.append(candidate)
     return valid, notices
+
+
+async def _collect_greynoise(
+    services: Services, cves: list[str], source: IntelSource, now: datetime, notices: list[str]
+) -> tuple[dict[str, GreyNoiseResult], str]:
+    """Optional GreyNoise readings. Never degrades the bundle; gaps stay explicit.
+
+    Fixture mode uses the labeled SAMPLE file. Live mode needs a configured key;
+    without one GreyNoise is simply absent (and no fixture is substituted).
+    """
+    if source == "fixture" or (source == "auto" and services.settings.offline):
+        try:
+            data = await services.fixture_intel.greynoise_for(
+                cves, now, services.settings.greynoise_window_days
+            )
+        except ProviderError as exc:
+            notices.append(f"GreyNoise SAMPLE fixture unavailable: {exc}")
+            return {}, "unavailable"
+        return data, "sample-fixture"
+    if not services.greynoise.configured:
+        return {}, "unavailable"
+    try:
+        return await services.greynoise.lookup(cves, now), "greynoise"
+    except ProviderError as exc:
+        notices.append(f"GreyNoise lookup failed: {exc}")
+        gap = "GreyNoise lookup failed (see notices)."
+        return (
+            {c: GreyNoiseResult(cve=c, state="not_checked", reason=gap) for c in cves},
+            "unavailable",
+        )
 
 
 async def enrich_threat_intel(
@@ -232,10 +360,16 @@ async def enrich_threat_intel(
         except ProviderError as exc:
             raise ProviderUnavailable(str(exc)) from exc
 
+    greynoise_data, greynoise_source = await _collect_greynoise(
+        services, cves, source, now, notices
+    )
+
     bundle = ThreatIntelBundle(
         cve_ids=cves,
         epss=epss_data,
         kev_status=kev_data,
+        greynoise=greynoise_data,
+        greynoise_source=greynoise_source,  # type: ignore[arg-type]
         collected_at=now,
         epss_source=epss_source,  # type: ignore[arg-type]
         kev_source=kev_source,  # type: ignore[arg-type]
@@ -247,7 +381,10 @@ async def enrich_threat_intel(
         action="enrich_threat_intel",
         subject=",".join(cves) or None,
         outcome="ok",
-        rationale=f"source={bundle.epss_source}/{bundle.kev_source}; degraded={bundle.degraded}",
+        rationale=(
+            f"source={bundle.epss_source}/{bundle.kev_source}; degraded={bundle.degraded}; "
+            f"greynoise={bundle.greynoise_source}"
+        ),
     )
     return bundle
 
@@ -263,6 +400,19 @@ def _load_fixture_findings(services: Services, fixture: str) -> list[Finding]:
     except InvalidInputError:
         assets = {}
     return attach_asset_context(findings, assets)
+
+
+def _cves_by_severity(findings: list[Finding]) -> list[str]:
+    """Distinct CVEs, most severe finding first (ties alphabetical).
+
+    The order decides which CVEs get optional, call-budgeted lookups first.
+    """
+    worst: dict[str, int] = {}
+    for f in findings:
+        rank = _SEVERITY_RANK[f.severity]
+        for cve in f.cve_ids:
+            worst[cve] = max(worst.get(cve, -1), rank)
+    return sorted(worst, key=lambda c: (-worst[c], c))
 
 
 async def investigate(
@@ -310,7 +460,7 @@ async def investigate(
         findings = [finding]
 
     intel: ThreatIntelBundle | None = None
-    all_cves = sorted({c for f in findings for c in f.cve_ids})
+    all_cves = _cves_by_severity(findings)
     if include_intel and all_cves:
         intel = await enrich_threat_intel(services, all_cves, intel_source)
     elif include_intel:
@@ -359,6 +509,10 @@ async def investigate(
                 "inventory_rules": inventory_rules or None,
             },
         )
+    for report, risk_score in zip(
+        reports, score_batch(services, [(r.finding, r.record) for r in reports]), strict=True
+    ):
+        report.risk_score = risk_score
     return reports
 
 

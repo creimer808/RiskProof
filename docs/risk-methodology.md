@@ -56,6 +56,34 @@ Post-rules (transparent, each adds a rationale line):
 - **False-positive cap:** applicability `suspected_not_affected` caps priority
   at P3. It **never zeroes or suppresses** a finding — a human decides.
 
+## Risk score and ranking
+
+Alongside (never instead of) the P1-P4 decision table, `investigate_finding`
+returns a **risk score** per finding. It is not opaque: it is a published
+additive table, and every point is attributable to a visible component.
+
+| Component | Points | Rule |
+| --- | --- | --- |
+| GreyNoise active exploitation | 0 or 30 | malicious-tagged scanning/exploitation seen by GreyNoise in the lookback window (default 3 days) |
+| CISA KEV | 0 or 30 | the CVE is KEV-listed |
+| EPSS | 0-25 | `round(EPSS x 25)` |
+| Affected assets | 0-15 | distinct assets with an **open** finding for this vulnerability: 1 = 2, 2-4 = 5, 5-19 = 9, 20-99 = 12, 100+ = 15 |
+
+- A **vulnerability** is a CVE (a finding with several CVEs takes its highest-ranked
+  one and names it) or, with no CVE, the scanner plugin.
+- **Availability:** an input that could not be read adds no points and is listed as
+  unavailable (`inputs_available`, e.g. 3 of 4). GreyNoise `no_data` (no tag for the
+  CVE) and `not_checked` (budget, rate limit, error, not configured) are gaps,
+  never low risk. KEV absence in a SAMPLE catalog is not an available input.
+- **`exploited_now`** is true when GreyNoise `observed` malicious activity or the CVE is
+  KEV-listed. The **ranking** is `(exploited_now, score, affected assets)`, highest
+  first, so an actively exploited vulnerability outranks a higher-scoring quiet one.
+- **GreyNoise caveat:** a reading means scanning or exploitation attempts against
+  GreyNoise's own sensors. It is not evidence that a specific asset was targeted,
+  reachable, or compromised, and no tag does not mean not exploited.
+- The P1-P4 priority is unchanged by the score. Weights live in
+  `engine/riskscore.py`; change them there and here together.
+
 ## Evidence confidence
 
 | Label | Meaning |

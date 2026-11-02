@@ -8,6 +8,7 @@ from riskproof.config import Settings
 from riskproof.ingest.inventory import AssetInventorySource
 from riskproof.providers.epss import EPSSProvider
 from riskproof.providers.fixtures_source import FixtureIntelSource
+from riskproof.providers.greynoise import GreyNoiseProvider
 from riskproof.providers.kev import KEVProvider
 from riskproof.providers.tenable import TenableBridge
 from riskproof.storage.db import Database
@@ -33,6 +34,7 @@ class Services:
     kev: KEVProvider
     fixture_intel: FixtureIntelSource
     tenable: TenableBridge
+    greynoise: GreyNoiseProvider
     asset_inventory: AssetInventorySource
 
 
@@ -55,5 +57,6 @@ def build_services(settings: Settings) -> Services:
         ),
         fixture_intel=FixtureIntelSource(settings.effective_fixtures_dir),
         tenable=TenableBridge(settings.tenable_base_url),
+        greynoise=GreyNoiseProvider.from_env(settings, IntelCacheRepository(db)),
         asset_inventory=AssetInventorySource(settings.effective_asset_inventory),
     )
