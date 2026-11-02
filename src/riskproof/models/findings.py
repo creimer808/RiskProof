@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from riskproof.models.tags import check_stored_tags
+
 CVE_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 
 MAX_TEXT_FIELDS = 8_000
@@ -47,6 +49,16 @@ class Severity(StrEnum):
     LOW = "low"
     INFO = "info"
     UNKNOWN = "unknown"
+
+
+class FindingStatus(StrEnum):
+    """Lifecycle of a stored finding across repeated imports."""
+
+    OPEN = "open"
+    #: Tenable reported ``state: fixed`` (authoritative).
+    RESOLVED = "resolved"
+    #: Absent from a later complete, in-scope export (inference; reversible).
+    NOT_SEEN = "not_seen"
 
 
 #: Nessus numeric severity (ReportItem @severity) to normalized severity.
@@ -113,6 +125,13 @@ class Asset(BaseModel):
     owner: str | None = Field(default=None, max_length=256)
     services: list[ServiceObservation] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
+    #: Tenable asset tags as ``category -> values`` (e.g. ``{"Location": ["DMZ"]}``).
+    tags: dict[str, list[str]] = Field(default_factory=dict)
+
+    @field_validator("tags")
+    @classmethod
+    def _bounded_tags(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        return check_stored_tags(value)
 
 
 class Finding(BaseModel):

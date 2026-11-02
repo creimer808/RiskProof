@@ -55,7 +55,7 @@ Claude orchestrates the investigation; Python does the deterministic work.
  Claude (orchestration + reasoning, guided by the bundled Agent Skill)
         │  MCP over stdio
         ▼
- RiskProof MCP server — 11 tools over deterministic engines
+ RiskProof MCP server — 12 tools over deterministic engines
  ┌──────────────────────────────────────────────────────────┐
  │ 1 IMPORT   .nessus files or Tenable VM API (read-only)    │
  │ 2 ENRICH   FIRST EPSS scores + CISA KEV catalog (cached)  │
@@ -81,7 +81,8 @@ nudge a P1 down to a P3.
 | Phase | Tool | What it does |
 | --- | --- | --- |
 | Import | `import_nessus` | Ingest a `.nessus` report; KEV-aware triage summary with ranked candidates |
-| Import | `import_tenable` | Read-only Tenable VM vulnerability export via API (same summary) |
+| Import | `import_tenable` | Read-only Tenable VM vulnerability export via API (same summary); optional asset-tag filter |
+| Import | `list_tenable_tags` | List the tenant's tag categories and values to build a tag filter |
 | Investigate | `investigate_finding` | Build the evidence record + risk assessment (batches of 25) |
 | Investigate | `enrich_threat_intel` | Real EPSS scores + KEV status with provenance |
 | Investigate | `verify_applicability` | Cross-check scanner claims vs. observed versions; flags suspected false positives |
@@ -90,7 +91,7 @@ nudge a P1 down to a P3.
 | Decide | `simulate_remediation` | Compare fix / restrict / verify options and expected effects |
 | Decide | `execute_risk_policy` | P1–P4 decision table → recorded, approval-gated actions (dry-run default) |
 | Review | `get_audit_trail` | Per-finding or recent history plus pending actions |
-| Review | `generate_report` | Self-contained HTML report (rollup, queue, compact finding cards, audit) written 0600 |
+| Review | `generate_report` | Self-contained HTML report (rollup, queue, compact finding cards, audit) written 0600; resolved / not-seen findings excluded unless `include_resolved` |
 
 ---
 
@@ -114,10 +115,14 @@ and KEV feeds.
 
 ### Connect Claude
 
-Claude Code (recommended) — registers the server, creates the import directory:
+Claude Code (recommended) — an interactive setup that prompts for your folders,
+validation allowlist and (hidden) Tenable / GreyNoise keys, checks the server
+starts, registers it, and offers to open Claude Code with RiskProof connected:
 
 ```bash
-./scripts/setup-mcp.sh
+./scripts/setup-mcp.sh              # prompts; Enter accepts each default
+./scripts/setup-mcp.sh --yes        # no prompts: exported variables + defaults
+./scripts/setup-mcp.sh --no-launch  # do not offer to open Claude Code
 ```
 
 Or register manually:
@@ -246,7 +251,7 @@ is recorded rather than executed.
   of seconds.
 - **Tenable Vulnerability Management:** set `TENABLE_ACCESS_KEY` /
   `TENABLE_SECRET_KEY` in the server's environment (the setup script prompts
-  for them; use a read-only key). `import_tenable` runs a read-only export —
+  for them with hidden input; use a read-only key). `import_tenable` runs a read-only export —
   keys are never logged and never accepted as tool input. *Status: covered by
   mock-transport tests; verify against a real tenant before relying on it.*
 
@@ -352,7 +357,7 @@ src/riskproof/            application code + MCP server
   storage/                SQLite persistence + audit log
   ingest/                 .nessus XML + normalized JSON ingestion
 skills/riskproof-investigator/SKILL.md   Claude Agent Skill
-scripts/setup-mcp.sh      registers the MCP server with Claude Code
+scripts/setup-mcp.sh      interactive setup: prompts, server check, registers with Claude Code
 fixtures/                 clearly-labeled SAMPLE data (.nessus, JSON, EPSS, KEV)
 tests/                    unit + integration (incl. end-to-end stdio MCP test)
 docs/                     architecture, security, methodology, usage

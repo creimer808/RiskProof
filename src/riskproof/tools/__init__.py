@@ -99,6 +99,8 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         limit: int = 5000,
         only_with_cve: bool = False,
         top_n: int = 25,
+        reconcile: bool = False,
+        tags: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         """Import findings from Tenable Vulnerability Management (Tenable One) via API.
 
@@ -115,9 +117,23 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
             limit: max findings to import (default 5000, max 50000).
             only_with_cve: keep only findings that reference a CVE.
             top_n: how many ranked candidates to return (max 100).
+            reconcile: apply the not_seen marks the preview reported; default
+                False = preview only.
+            tags: only assets carrying these Tenable tags, as
+                {"<category>": ["<value>", ...]} - e.g. {"Location": ["DMZ"]}.
+                Values within a category are OR-ed, categories are AND-ed. Names
+                must match Tenable exactly: call list_tenable_tags first when
+                unsure. A tag-filtered import is a partial listing, so it never
+                reconciles (marks findings not_seen).
 
         Returns the same triage summary as import_nessus, with provenance
         source="tenable". Findings are stored but not yet enriched or assessed.
+        `changes` counts new / updated / reopened / resolved findings, and
+        `reconciliation` previews (or, with reconcile=True, applies) marking
+        previously imported Tenable findings that this complete export no longer
+        lists as not_seen. That is an inference, not proof of a fix; a Tenable
+        state of "fixed" is the only confirmed signal. Reconciliation is skipped
+        for truncated, empty, or partial-scope exports (see skipped_reason).
         """
         try:
             summary = await importer.import_tenable(
@@ -129,8 +145,29 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
                 limit=limit,
                 only_with_cve=only_with_cve,
                 top_n=top_n,
+                reconcile=reconcile,
+                tags=tags,
             )
             return {"ok": True, **summary}
+        except RiskProofError as exc:
+            return {"ok": False, "error": error_payload(exc)}
+
+    @mcp.tool()
+    async def list_tenable_tags() -> dict[str, Any]:
+        """List the Tenable tag categories and values defined in the tenant.
+
+        Read-only. Use it to turn a phrase like "the DMZ" or "the network team's
+        assets" into the exact category and value that import_tenable(tags=...)
+        needs, e.g. {"Location": ["DMZ"]}. Credentials come from the server's
+        environment, never from tool input.
+
+        Returns categories mapped to their values (capped, with `truncated`
+        saying so). A tag's meaning for risk (for example that Location: DMZ is
+        internet-facing) is NOT inferred from its name: the human operator
+        records it as a tag rule in the asset inventory.
+        """
+        try:
+            return {"ok": True, **await importer.list_tenable_tags(services)}
         except RiskProofError as exc:
             return {"ok": False, "error": error_payload(exc)}
 
@@ -165,6 +202,19 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
         stated once for the batch. detail="full" adds description, plugin
         output, solution, raw intel, and per-dimension basis lines — use it for
         a single finding when you need that text (e.g. version evidence).
+
+        Each finding also carries `risk_score`: a 0-100 additive score over four
+        visible components (GreyNoise active exploitation, CISA KEV, EPSS,
+        affected assets), each with points, maximum, availability and basis, plus
+        `exploited_now` (GreyNoise observed OR KEV-listed). The batch-level
+        `ranking` lists findings exploited-now first, then by score. Quote the
+        breakdown and `inputs_available`; unavailable inputs are gaps, never
+        low risk. GreyNoise readings are attempts against GreyNoise sensors.
+
+        A bundled patch finding can list dozens of CVEs. In the summary view it
+        keeps intel statements for the scored CVE only and adds `intel_rollup`
+        (counts of CVEs, KEV-listed and GreyNoise-observed CVEs, with a few ids);
+        use detail="full" for every statement.
         """
         try:
             reports = await inv.investigate(
@@ -350,6 +400,7 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
     @mcp.tool()
     async def generate_report(
         min_priority: Literal["P1", "P2", "P3", "P4"] | None = None,
+        include_resolved: bool = False,
     ) -> dict[str, Any]:
         """Generate a self-contained HTML report of investigated findings.
 
@@ -366,11 +417,14 @@ def register_tools(mcp: FastMCP, services: Services) -> None:
             min_priority: only include findings at this priority or more
                 urgent (e.g. "P2" keeps P1 and P2). Omit for everything. The
                 filter is disclosed in the report header either way.
+            include_resolved: also include findings marked resolved (Tenable
+                "fixed") or not_seen (absent from a later complete import).
+                By default they are excluded and the header says how many.
 
         Returns the written path plus the report summary counts.
         """
         try:
-            data = report_engine.build_report(services, min_priority)
+            data = report_engine.build_report(services, min_priority, include_resolved)
             page = report_engine.render_html(data)
             target = report_engine.default_report_path(
                 services.settings.effective_reports_dir, data.generated_at

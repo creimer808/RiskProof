@@ -55,6 +55,7 @@ Run this loop per finding (or over a fixture dataset):
 ```
 import_nessus(file="Weekly_Network_Scan.nessus", min_severity="high")   # file in the import dir
 import_tenable(severity=["critical","high"], since_days=30)              # Tenable One API
+import_tenable(severity=["critical"], tags={"Location": ["DMZ"]})         # one slice, by asset tag
 ```
 Imports store findings and return a triage summary with ranked `candidates`;
 they do NOT enrich or assess. Report the totals and filters honestly (how many
@@ -63,6 +64,18 @@ parsed vs imported), then investigate candidates in batches:
 CISA KEV catalog when available — say so, and say if it was unavailable. Never ask
 the user to paste Tenable keys into chat; if `import_tenable` reports missing
 credentials, tell the human operator to set them in the server environment.
+`import_tenable` also returns `changes` (new/updated/reopened/resolved) and a
+`reconciliation` block: a **preview** of earlier Tenable findings this complete
+export no longer lists. Show the user the preview (counts, sample ids, any
+`skipped_reason`) and ask before re-running with `reconcile=True`; "not seen" is
+an inference from absence, only Tenable's `fixed` state is confirmed.
+
+For "the DMZ" / "the network team's assets", call `list_tenable_tags()` first and pass
+the exact category and value as `tags={...}`; never guess spellings. A tag-filtered
+import is partial and never reconciles. A tag is a label from Tenable: do not treat
+"DMZ" as internet-facing unless the operator's inventory has a tag rule saying so.
+Read the import's `tags` block and warnings (tags recorded from the export vs from
+your filter) and relay them.
 A patch/rollup finding that bundles many CVEs is flagged if ANY one CVE is
 KEV-listed; note that this does not prove that CVE applies to this host.
 
@@ -87,6 +100,24 @@ The assessment separates: severity (CVSS/VPR), exploitation likelihood
 (EPSS/KEV), environmental exposure, applicability, business impact, evidence
 confidence, and recommended priority (P1–P4) with rationale. Report each
 dimension; do not collapse them into "it's a 10".
+
+### 2b. Use the risk score and ranking
+`investigate_finding` also returns `risk_score` per finding and a batch `ranking`.
+The score is a published additive table: GreyNoise active exploitation (30),
+CISA KEV (30), EPSS (0-25), affected assets (0-15). Rules:
+- Cite the **component breakdown** and `inputs_available` (e.g. "3 of 4 inputs"), not
+  just the number. Never invent, adjust, or re-derive your own score.
+- Lead with `exploited_now` findings (GreyNoise observed OR KEV-listed); the
+  `ranking` already puts them first.
+- State the GreyNoise caveat: it is scanning/exploitation attempts against
+  GreyNoise's sensors, not proof this asset was targeted or reachable.
+- `no_data`, `not_checked`, or an absent GreyNoise reading is a **gap, never low
+  risk**; say it is missing. If GreyNoise is not configured, a human operator sets
+  `GREYNOISE_API_KEY` in the server environment (never paste it into chat).
+- The score orders work; P1-P4 priority still comes from the decision table.
+- Bundled patch findings (dozens of CVEs) show intel for the scored CVE plus an
+  `intel_rollup` of counts; quote those counts rather than implying the other CVEs
+  were individually assessed, and use `detail="full"` if you need a specific one.
 
 ### 3. Verify applicability
 ```

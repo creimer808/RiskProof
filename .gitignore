@@ -30,3 +30,12 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local planning docs — never pushed
+plans/
+
+# Local brainstorming specs — never pushed
+docs/superpowers/
+
+# Local agent scratch (brainstorm sessions, tokens) — never pushed
+.superpowers/

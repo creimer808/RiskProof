@@ -179,3 +179,16 @@ async def test_invalid_inventory_fails_loudly(services):
     services.settings.effective_asset_inventory.write_text('{"rules": [{"match": "x"}]}')
     with pytest.raises(ConfigurationError):
         await inv.investigate(services, finding_ids=[LOG4SHELL])
+
+
+def test_inventory_label_is_kept_but_never_used_for_matching():
+    inv = AssetInventory.parse(
+        {"label": "DEMO: invented", "rules": [{"match": "web01", "criticality": "high"}]}, "t"
+    )
+    assert inv.label == "DEMO: invented"
+    assert AssetInventory.parse({"rules": [{"match": "web01", "owner": "x"}]}, "t").label is None
+
+
+def test_inventory_label_is_length_limited():
+    with pytest.raises(ConfigurationError):
+        AssetInventory.parse({"label": "x" * 301, "rules": [{"match": "web01", "owner": "x"}]}, "t")

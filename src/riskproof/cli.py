@@ -26,6 +26,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use live EPSS/KEV feeds instead of bundled sample fixtures.",
     )
+    pending = sub.add_parser(
+        "investigate-pending",
+        help="Investigate imported findings that have no assessment yet (best candidates first).",
+    )
+    pending.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Investigate at most this many findings (default: all pending).",
+    )
+    pending.add_argument(
+        "--refresh-greynoise",
+        action="store_true",
+        help="Also re-investigate findings whose stored intel has no live GreyNoise reading.",
+    )
     report = sub.add_parser(
         "report", help="Write a self-contained HTML report of investigated findings."
     )
@@ -34,6 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["P1", "P2", "P3", "P4"],
         default=None,
         help="Only include findings at this priority or more urgent.",
+    )
+    report.add_argument(
+        "--include-resolved",
+        action="store_true",
+        help="Also include findings that are resolved or no longer seen by the scanner.",
     )
     report.add_argument(
         "--output",
@@ -107,7 +127,44 @@ def _run_demo(live: bool) -> int:
     return 0
 
 
-def _run_report(min_priority: str | None, output: Path | None) -> int:
+def _run_investigate_pending(limit: int | None, refresh_greynoise: bool) -> int:
+    import asyncio
+
+    from riskproof.config import load_settings
+    from riskproof.engine import importer
+    from riskproof.services import build_services
+
+    if limit is not None and limit < 1:
+        print("--limit must be at least 1.", file=sys.stderr)
+        return 2
+    services = build_services(load_settings())
+    if not services.settings.offline and not services.greynoise.configured:
+        print(
+            "warning: GREYNOISE_API_KEY is not set in this environment, so these "
+            "investigations will have no GreyNoise readings (scores show 3 of 4 inputs). "
+            "Export it, then re-run with --refresh-greynoise to fill them in.",
+            file=sys.stderr,
+        )
+
+    def progress(done: int, total: int) -> None:
+        print(f"  investigated {done}/{total}", file=sys.stderr, flush=True)
+
+    try:
+        result = asyncio.run(
+            importer.investigate_pending(
+                services, limit, progress=progress, refresh_greynoise=refresh_greynoise
+            )
+        )
+    finally:
+        services.db.close()
+    print(
+        f"Investigated {result['investigated']} findings in {result['batches']} batches; "
+        f"{result['remaining']} still pending."
+    )
+    return 0
+
+
+def _run_report(min_priority: str | None, output: Path | None, include_resolved: bool) -> int:
     from riskproof.config import load_settings
     from riskproof.engine import report as report_engine
     from riskproof.services import build_services
@@ -115,7 +172,7 @@ def _run_report(min_priority: str | None, output: Path | None) -> int:
     settings = load_settings()
     services = build_services(settings)
     try:
-        data = report_engine.build_report(services, min_priority)
+        data = report_engine.build_report(services, min_priority, include_resolved)
         page = report_engine.render_html(data)
         target = output or report_engine.default_report_path(Path.cwd(), data.generated_at)
         written = report_engine.write_report_file(page, target)
@@ -137,8 +194,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "demo":
         return _run_demo(live=args.live)
+    if args.command == "investigate-pending":
+        return _run_investigate_pending(args.limit, args.refresh_greynoise)
     if args.command == "report":
-        return _run_report(args.min_priority, args.output)
+        return _run_report(args.min_priority, args.output, args.include_resolved)
     # serve (explicit or default)
     from riskproof.server import main as serve_main
 

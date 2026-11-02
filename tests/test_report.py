@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import html
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -233,3 +233,108 @@ def test_cli_report_writes_html(tmp_path, monkeypatch):
     assert main(["report"]) == 0
     default_files = list(tmp_path.glob("riskproof-report-*.html"))
     assert default_files, "expected a timestamped default report file"
+
+
+# --- finding lifecycle: inactive findings ------------------------------------
+
+DISCLOSURE = "resolved / not-seen findings excluded"
+
+
+def _mark_resolved(services, finding_id: str) -> None:
+    finding = services.findings.get(finding_id)
+    services.findings.save_many([finding.model_copy(update={"raw": {"state": "FIXED"}})])
+
+
+async def test_resolved_findings_are_excluded_and_disclosed(services):
+    total = await _investigate_fixture(services)
+    _mark_resolved(services, LOG4SHELL)
+
+    report = build_report(services)
+
+    assert LOG4SHELL not in {f.finding_id for f in report.findings}
+    assert report.summary.resolved_excluded == 1
+    assert report.summary.investigated_total == total - 1
+    assert report.summary.shown == total - 1
+    assert f"1 {DISCLOSURE}" in render_html(report)
+
+
+async def test_no_disclosure_when_nothing_excluded(services):
+    await _investigate_fixture(services)
+    report = build_report(services)
+    assert report.summary.resolved_excluded == 0
+    assert DISCLOSURE not in render_html(report)
+
+
+async def test_include_resolved_restores_them(services):
+    total = await _investigate_fixture(services)
+    _mark_resolved(services, LOG4SHELL)
+
+    report = build_report(services, include_resolved=True)
+
+    assert LOG4SHELL in {f.finding_id for f in report.findings}
+    assert report.summary.resolved_excluded == 0
+    assert report.summary.investigated_total == total
+    assert DISCLOSURE not in render_html(report)
+
+
+async def test_not_seen_findings_are_excluded_too(services):
+    total = await _investigate_fixture(services)
+    result = services.findings.reconcile_unseen(
+        source="fixture",
+        severities=["critical", "high", "medium", "low", "info", "unknown"],
+        seen_before=datetime.now(UTC) + timedelta(days=1),
+        apply=True,
+        max_fraction=1.0,
+    )
+    assert result.applied
+    assert result.candidates >= 1
+
+    report = build_report(services)
+
+    assert report.summary.resolved_excluded == result.candidates
+    assert report.summary.investigated_total == total - result.candidates
+
+
+async def test_pending_actions_for_resolved_findings_still_listed(services):
+    await _investigate_fixture(services)
+    services.pending.add(LOG4SHELL, "patch", "pending_approval", {"why": "test"})
+    _mark_resolved(services, LOG4SHELL)
+
+    report = build_report(services)
+
+    assert any(a["finding_id"] == LOG4SHELL for a in report.pending_actions)
+
+
+def test_cli_include_resolved_flag(tmp_path, monkeypatch):
+    for var in (
+        "RISKPROOF_DB_PATH",
+        "RISKPROOF_OFFLINE",
+        "RISKPROOF_FIXTURES_DIR",
+        "RISKPROOF_IMPORT_DIR",
+        "RISKPROOF_ASSET_INVENTORY",
+        "RISKPROOF_REPORTS_DIR",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures"
+    monkeypatch.setenv("RISKPROOF_DB_PATH", str(tmp_path / "cli.db"))
+    monkeypatch.setenv("RISKPROOF_OFFLINE", "true")
+    monkeypatch.setenv("RISKPROOF_FIXTURES_DIR", str(fixtures))
+    monkeypatch.setenv("RISKPROOF_ASSET_INVENTORY", str(tmp_path / "assets.json"))
+    monkeypatch.chdir(tmp_path)
+
+    from riskproof.cli import main
+    from riskproof.config import load_settings
+    from riskproof.services import build_services
+
+    seed = build_services(load_settings())
+    asyncio.run(inv.investigate(seed, fixture="findings_sample.json"))
+    _mark_resolved(seed, LOG4SHELL)
+    seed.db.close()
+
+    default_out = tmp_path / "default.html"
+    full_out = tmp_path / "full.html"
+    assert main(["report", "--output", str(default_out)]) == 0
+    assert main(["report", "--include-resolved", "--output", str(full_out)]) == 0
+    assert DISCLOSURE in default_out.read_text(encoding="utf-8")
+    assert DISCLOSURE not in full_out.read_text(encoding="utf-8")
+    assert LOG4SHELL in full_out.read_text(encoding="utf-8")

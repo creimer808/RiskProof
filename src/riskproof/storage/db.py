@@ -5,7 +5,26 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+#: Columns added to ``findings`` by schema v2 (finding lifecycle), in order.
+_V2_FINDING_COLUMNS = {
+    "status": "TEXT NOT NULL DEFAULT 'open'",
+    "status_changed_at": "TEXT",
+    "last_seen_at": "TEXT",
+    "resolution_source": "TEXT",
+}
+
+#: Reverses the v2 migration (SQLite >= 3.35 for DROP COLUMN). Run manually via
+#: ``executescript`` on a database copy; the v1 columns and all rows are untouched.
+ROLLBACK_V2_SQL = """
+DROP INDEX IF EXISTS idx_findings_status;
+ALTER TABLE findings DROP COLUMN status;
+ALTER TABLE findings DROP COLUMN status_changed_at;
+ALTER TABLE findings DROP COLUMN last_seen_at;
+ALTER TABLE findings DROP COLUMN resolution_source;
+UPDATE meta SET value = '1' WHERE key = 'schema_version';
+"""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -65,11 +84,24 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+        self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive, idempotent upgrade to the current schema (never drops data)."""
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(findings)")}
+        for name, ddl in _V2_FINDING_COLUMNS.items():
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE findings ADD COLUMN {name} {ddl}")
         self._conn.execute(
-            "INSERT INTO meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO NOTHING",
+            "UPDATE findings SET last_seen_at = ingested_at WHERE last_seen_at IS NULL"
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status)")
+        self._conn.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
-        self._conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         cur = self._conn.execute(sql, params)

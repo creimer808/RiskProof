@@ -1,0 +1,38 @@
+{
+  "_comment": "SAMPLE GreyNoise data for offline demonstration - NOT live threat intelligence. Shaped like GET /v3/tags plus per-tag daily activity; activity uses days_ago so it always falls inside the lookback window.",
+  "tags": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "slug": "sample-log4j-rce-attempt",
+      "name": "SAMPLE Apache Log4j RCE Attempt",
+      "intention": "malicious",
+      "cves": ["CVE-2021-44228"]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "slug": "sample-zerologon-check",
+      "name": "SAMPLE Netlogon Elevation of Privilege Check",
+      "intention": "suspicious",
+      "cves": ["CVE-2020-1472"]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "slug": "sample-zerologon-attempt",
+      "name": "SAMPLE Zerologon Attempt",
+      "intention": "malicious",
+      "cves": ["CVE-2020-1472"]
+    }
+  ],
+  "activity": {
+    "00000000-0000-4000-8000-000000000001": [
+      {"days_ago": 1, "intention": "malicious", "active_ips": 11},
+      {"days_ago": 0, "intention": "malicious", "active_ips": 22}
+    ],
+    "00000000-0000-4000-8000-000000000002": [
+      {"days_ago": 0, "intention": "suspicious", "active_ips": 4}
+    ],
+    "00000000-0000-4000-8000-000000000003": [
+      {"days_ago": 8, "intention": "malicious", "active_ips": 6}
+    ]
+  }
+}
